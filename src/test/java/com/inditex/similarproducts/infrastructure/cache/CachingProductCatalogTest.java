@@ -65,6 +65,19 @@ class CachingProductCatalogTest {
     }
 
     @Test
+    void doesNotCacheFailures() {
+        when(delegate.findById(id("6")))
+                .thenThrow(new ProductCatalogUnavailableException(id("6"), new RuntimeException("500")))
+                .thenReturn(Optional.of(product("6")));
+
+        assertThatThrownBy(() -> catalog.findById(id("6")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
+        assertThat(catalog.findById(id("6"))).contains(product("6"));
+
+        verify(delegate, times(2)).findById(id("6"));
+    }
+
+    @Test
     void cachesSimilarIds() {
         when(delegate.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3")));
 
@@ -103,7 +116,8 @@ class CachingProductCatalogTest {
         });
 
         // First request gives up after the lookup timeout...
-        assertThat(catalog.findById(id("1000"))).isEmpty();
+        assertThatThrownBy(() -> catalog.findById(id("1000")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
 
         // ...but the upstream call keeps running and fills the cache
         Thread.sleep(600);

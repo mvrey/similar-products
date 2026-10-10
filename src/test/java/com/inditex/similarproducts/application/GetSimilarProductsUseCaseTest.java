@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.application;
 
+import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
@@ -53,13 +54,26 @@ class GetSimilarProductsUseCaseTest {
     }
 
     @Test
-    void skipsSimilarProductsThatCannotBeRetrieved() {
+    void skipsSimilarProductsThatDoNotExist() {
         when(catalog.findSimilarIds(id("4"))).thenReturn(List.of(id("1"), id("2"), id("5")));
         when(catalog.findById(id("1"))).thenReturn(Optional.of(product("1")));
         when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
         when(catalog.findById(id("5"))).thenReturn(Optional.empty());
 
         assertThat(useCase.execute(id("4")))
+                .extracting(Product::id)
+                .containsExactly(id("1"), id("2"));
+    }
+
+    @Test
+    void skipsSimilarProductsThatCannotBeRetrieved() {
+        when(catalog.findSimilarIds(id("5"))).thenReturn(List.of(id("1"), id("2"), id("6")));
+        when(catalog.findById(id("1"))).thenReturn(Optional.of(product("1")));
+        when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
+        when(catalog.findById(id("6")))
+                .thenThrow(new ProductCatalogUnavailableException(id("6"), new RuntimeException("500")));
+
+        assertThat(useCase.execute(id("5")))
                 .extracting(Product::id)
                 .containsExactly(id("1"), id("2"));
     }

@@ -87,20 +87,22 @@ class HttpProductCatalogTest {
     }
 
     @Test
-    void returnsEmptyWhenProductServiceFails() {
+    void throwsUnavailableWhenProductServiceFails() {
         server.expect(requestTo(BASE_URL + "/product/6"))
                 .andRespond(withServerError());
 
-        assertThat(catalog.findById(new ProductId("6"))).isEmpty();
+        assertThatThrownBy(() -> catalog.findById(new ProductId("6")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
     }
 
     @Test
-    void returnsEmptyWhenProductDetailIsInvalid() {
+    void throwsUnavailableWhenProductDetailIsInvalid() {
         server.expect(requestTo(BASE_URL + "/product/7"))
                 .andRespond(withSuccess("""
                         {"id":"7","name":"","price":1.0,"availability":true}
                         """, MediaType.APPLICATION_JSON));
 
-        assertThat(catalog.findById(new ProductId("7"))).isEmpty();
+        assertThatThrownBy(() -> catalog.findById(new ProductId("7")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
     }
 }

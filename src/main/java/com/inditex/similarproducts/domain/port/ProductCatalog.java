@@ -23,7 +23,9 @@ public interface ProductCatalog {
     List<ProductId> findSimilarIds(ProductId productId);
 
     /**
-     * Returns the detail of a product, or empty if it does not exist or cannot be retrieved.
+     * Returns the detail of a product, or empty if it does not exist.
+     *
+     * @throws ProductCatalogUnavailableException if the product cannot be retrieved
      */
     Optional<Product> findById(ProductId productId);
 }

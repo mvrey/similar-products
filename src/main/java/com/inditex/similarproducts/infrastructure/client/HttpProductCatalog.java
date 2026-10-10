@@ -60,8 +60,8 @@ class HttpProductCatalog implements ProductCatalog {
             log.debug("Product {} not found", productId);
             return Optional.empty();
         } catch (RestClientException | IllegalArgumentException | NullPointerException e) {
-            log.warn("Could not retrieve product {}: {}", productId, e.getMessage());
-            return Optional.empty();
+            // Upstream error, timeout or a response that is not a valid product
+            throw new ProductCatalogUnavailableException(productId, e);
         }
     }
 }

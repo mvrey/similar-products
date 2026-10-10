@@ -54,16 +54,13 @@ public class CachingProductCatalog implements ProductCatalog {
             throw new ProductCatalogUnavailableException(productId, e);
         } catch (ExecutionException e) {
             evict(similarIdsCache, productId, lookup);
-            if (e.getCause() instanceof RuntimeException cause) {
-                throw cause;
-            }
-            throw new ProductCatalogUnavailableException(productId, e.getCause());
+            throw rethrowable(productId, e);
         }
     }
 
     @Override
     public Optional<Product> findById(ProductId productId) {
-        // A null result (product missing or failed) is not stored, so it is retried next time
+        // A missing product is loaded as null, which Caffeine does not store, so it is looked up again next time
         CompletableFuture<Product> lookup = productCache.get(productId,
                 (id, executor) -> CompletableFuture.supplyAsync(() -> delegate.findById(id).orElse(null), executor));
         try {
@@ -73,13 +70,22 @@ public class CachingProductCatalog implements ProductCatalog {
             }
             return Optional.ofNullable(product);
         } catch (TimeoutException e) {
-            log.debug("Product {} not available within {}, skipping", productId, lookupTimeout);
-            return Optional.empty();
+            log.debug("Product {} not available within {}", productId, lookupTimeout);
+            throw new ProductCatalogUnavailableException(productId, e);
         } catch (ExecutionException e) {
             evict(productCache, productId, lookup);
-            log.warn("Could not retrieve product {}: {}", productId, e.getCause().getMessage());
-            return Optional.empty();
+            throw rethrowable(productId, e);
         }
+    }
+
+    /**
+     * Unwraps the exception thrown by the delegate so callers see the same exceptions as without the cache.
+     */
+    private static RuntimeException rethrowable(ProductId productId, ExecutionException e) {
+        if (e.getCause() instanceof RuntimeException cause) {
+            return cause;
+        }
+        return new ProductCatalogUnavailableException(productId, e.getCause());
     }
 
     /**
