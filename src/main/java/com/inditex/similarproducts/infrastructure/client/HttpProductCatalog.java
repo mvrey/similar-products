@@ -7,7 +7,6 @@ import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -19,7 +18,6 @@ import java.util.Optional;
 /**
  * Adapter that implements the ProductCatalog port by calling the existing product APIs over HTTP.
  */
-@Component
 class HttpProductCatalog implements ProductCatalog {
 
     private static final Logger log = LoggerFactory.getLogger(HttpProductCatalog.class);
