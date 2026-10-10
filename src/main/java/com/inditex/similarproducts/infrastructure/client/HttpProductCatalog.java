@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.infrastructure.client;
 
+import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
@@ -43,6 +44,8 @@ class HttpProductCatalog implements ProductCatalog {
             return Arrays.stream(ids).map(ProductId::new).toList();
         } catch (HttpClientErrorException.NotFound e) {
             throw new ProductNotFoundException(productId);
+        } catch (RestClientException e) {
+            throw new ProductCatalogUnavailableException(productId, e);
         }
     }
 

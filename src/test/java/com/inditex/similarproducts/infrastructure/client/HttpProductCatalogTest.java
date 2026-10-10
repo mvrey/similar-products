@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.infrastructure.client;
 
+import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
@@ -49,6 +50,15 @@ class HttpProductCatalogTest {
 
         assertThatThrownBy(() -> catalog.findSimilarIds(new ProductId("99")))
                 .isInstanceOf(ProductNotFoundException.class);
+    }
+
+    @Test
+    void throwsUnavailableWhenSimilarIdsServiceFails() {
+        server.expect(requestTo(BASE_URL + "/product/1/similarids"))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> catalog.findSimilarIds(new ProductId("1")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
     }
 
     @Test

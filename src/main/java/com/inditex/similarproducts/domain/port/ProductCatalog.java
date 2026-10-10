@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.domain.port;
 
+import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
@@ -17,6 +18,7 @@ public interface ProductCatalog {
      * Returns the ids of the products similar to the given one, ordered by similarity.
      *
      * @throws ProductNotFoundException if the product does not exist
+     * @throws ProductCatalogUnavailableException if the catalog cannot be reached
      */
     List<ProductId> findSimilarIds(ProductId productId);
 
