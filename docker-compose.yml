@@ -1,0 +1,13 @@
+# Runs the application in a container, next to the mocks from https://github.com/dalogax/backendDevTest
+# (start those first with: docker-compose up -d simulado influxdb grafana)
+services:
+  similar-products:
+    build: .
+    image: similar-products
+    ports:
+      - "5000:5000"
+    environment:
+      # The mocks publish port 3001 on the host machine
+      PRODUCT_API_BASE_URL: http://host.docker.internal:3001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
