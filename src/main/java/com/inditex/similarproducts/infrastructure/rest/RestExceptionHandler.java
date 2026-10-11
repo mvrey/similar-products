@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.infrastructure.rest;
 
+import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import org.slf4j.Logger;
@@ -21,6 +22,13 @@ class RestExceptionHandler {
     ProblemDetail handleProductNotFound(ProductNotFoundException e) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
         problem.setTitle("Product not found");
+        return problem;
+    }
+
+    @ExceptionHandler(InvalidProductIdException.class)
+    ProblemDetail handleInvalidProductId(InvalidProductIdException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+        problem.setTitle("Invalid product id");
         return problem;
     }
 

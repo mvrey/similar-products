@@ -1,5 +1,7 @@
 package com.inditex.similarproducts.domain.model;
 
+import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
+
 import java.util.Objects;
 
 /**
@@ -10,7 +12,7 @@ public record ProductId(String value) {
     public ProductId {
         Objects.requireNonNull(value, "Product id must not be null");
         if (value.isBlank()) {
-            throw new IllegalArgumentException("Product id must not be blank");
+            throw new InvalidProductIdException("Product id must not be blank");
         }
     }
 

@@ -83,6 +83,7 @@ You can see the results at http://localhost:3000/d/Le2Ku9NMk/k6-performance-test
 | Product has no similar products | `200` with `[]` |
 | A similar product doesn't exist, fails, or is too slow | `200`: that product is **left out** and the others are returned |
 | The requested product doesn't exist | `404` |
+| The product id is blank | `400` |
 | The similar-ids service fails or is unreachable | `502` |
 
 Errors use the standard [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) *problem details* format:
@@ -264,7 +265,7 @@ before the cache is warm. The results are the same with the service running in D
 
 ## Tests
 
-43 tests, run with `./mvnw test`:
+44 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|

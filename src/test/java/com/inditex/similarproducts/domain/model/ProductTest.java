@@ -1,5 +1,6 @@
 package com.inditex.similarproducts.domain.model;
 
+import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -34,7 +35,7 @@ class ProductTest {
     @Test
     void rejectsBlankId() {
         assertThatThrownBy(() -> new ProductId(""))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(InvalidProductIdException.class);
     }
 
     @Test

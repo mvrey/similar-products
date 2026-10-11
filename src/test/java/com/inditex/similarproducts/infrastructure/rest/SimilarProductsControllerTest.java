@@ -66,6 +66,14 @@ class SimilarProductsControllerTest {
     }
 
     @Test
+    void returns400WhenProductIdIsBlank() throws Exception {
+        mockMvc.perform(get("/product/{productId}/similar", " "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.title").value("Invalid product id"));
+    }
+
+    @Test
     void returns502WhenCatalogIsUnavailable() throws Exception {
         when(getSimilarProducts.execute(new ProductId("1")))
                 .thenThrow(new ProductCatalogUnavailableException(new ProductId("1"), new RuntimeException("boom")));
