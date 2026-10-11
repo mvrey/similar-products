@@ -46,7 +46,7 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void returnsSimilarProductsInSimilarityOrder() {
-        when(catalog.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3"), id("4")));
+        when(catalog.findSimilarIds(id("1"))).thenReturn(Optional.of(List.of(id("2"), id("3"), id("4"))));
         when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
         when(catalog.findById(id("3"))).thenReturn(Optional.of(product("3")));
         when(catalog.findById(id("4"))).thenReturn(Optional.of(product("4")));
@@ -58,7 +58,7 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void returnsEachSimilarProductOnlyOnce() {
-        when(catalog.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3"), id("2")));
+        when(catalog.findSimilarIds(id("1"))).thenReturn(Optional.of(List.of(id("2"), id("3"), id("2"))));
         when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
         when(catalog.findById(id("3"))).thenReturn(Optional.of(product("3")));
 
@@ -70,7 +70,7 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void skipsSimilarProductsThatDoNotExist() {
-        when(catalog.findSimilarIds(id("4"))).thenReturn(List.of(id("1"), id("2"), id("5")));
+        when(catalog.findSimilarIds(id("4"))).thenReturn(Optional.of(List.of(id("1"), id("2"), id("5"))));
         when(catalog.findById(id("1"))).thenReturn(Optional.of(product("1")));
         when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
         when(catalog.findById(id("5"))).thenReturn(Optional.empty());
@@ -82,7 +82,7 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void skipsSimilarProductsThatCannotBeRetrieved() {
-        when(catalog.findSimilarIds(id("5"))).thenReturn(List.of(id("1"), id("2"), id("6")));
+        when(catalog.findSimilarIds(id("5"))).thenReturn(Optional.of(List.of(id("1"), id("2"), id("6"))));
         when(catalog.findById(id("1"))).thenReturn(Optional.of(product("1")));
         when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
         when(catalog.findById(id("6")))
@@ -95,15 +95,15 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void returnsEmptyListWhenThereAreNoSimilarProducts() {
-        when(catalog.findSimilarIds(id("1"))).thenReturn(List.of());
+        when(catalog.findSimilarIds(id("1"))).thenReturn(Optional.of(List.of()));
 
         assertThat(useCase.execute(id("1"))).isEmpty();
         verify(catalog, never()).findById(any());
     }
 
     @Test
-    void propagatesNotFoundForUnknownProduct() {
-        when(catalog.findSimilarIds(id("99"))).thenThrow(new ProductNotFoundException(id("99")));
+    void throwsNotFoundWhenProductDoesNotExist() {
+        when(catalog.findSimilarIds(id("99"))).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> useCase.execute(id("99")))
                 .isInstanceOf(ProductNotFoundException.class);
@@ -113,7 +113,7 @@ class GetSimilarProductsUseCaseTest {
     void fetchesProductDetailsInParallel() {
         // Each lookup waits until all three are running at the same time; one at a time, the barrier would time out
         CyclicBarrier allLookupsRunning = new CyclicBarrier(3);
-        when(catalog.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3"), id("4")));
+        when(catalog.findSimilarIds(id("1"))).thenReturn(Optional.of(List.of(id("2"), id("3"), id("4"))));
         when(catalog.findById(any())).thenAnswer(invocation -> {
             allLookupsRunning.await(5, TimeUnit.SECONDS);
             return Optional.of(product(invocation.<ProductId>getArgument(0).value()));

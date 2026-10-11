@@ -1,6 +1,7 @@
 package com.inditex.similarproducts.application;
 
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
@@ -30,8 +31,15 @@ public class GetSimilarProductsUseCase {
         this.executor = productLookupExecutor;
     }
 
+    /**
+     * @throws ProductNotFoundException if the product does not exist
+     * @throws ProductCatalogUnavailableException if its similar products cannot be determined
+     */
     public List<Product> execute(ProductId productId) {
-        List<CompletableFuture<Optional<Product>>> lookups = productCatalog.findSimilarIds(productId).stream()
+        List<ProductId> similarIds = productCatalog.findSimilarIds(productId)
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+
+        List<CompletableFuture<Optional<Product>>> lookups = similarIds.stream()
                 .distinct()
                 .map(id -> CompletableFuture.supplyAsync(() -> findSimilarProduct(id), executor))
                 .toList();
@@ -43,22 +51,16 @@ public class GetSimilarProductsUseCase {
     }
 
     /**
-     * A similar product that cannot be retrieved right now is left out rather than failing the whole response.
+     * A similar product that does not exist or cannot be retrieved right now is left out rather than
+     * failing the whole response.
      */
     private Optional<Product> findSimilarProduct(ProductId id) {
         try {
             return productCatalog.findById(id);
         } catch (ProductCatalogUnavailableException e) {
-            log.warn("Skipping similar product {}: {}", id, rootCauseMessage(e));
+            // Expected and frequent (e.g. a product that always fails): circuit breakers log the state changes
+            log.debug("Skipping similar product: {}", e.getMessage());
             return Optional.empty();
         }
-    }
-
-    private static String rootCauseMessage(Throwable e) {
-        Throwable cause = e;
-        while (cause.getCause() != null) {
-            cause = cause.getCause();
-        }
-        return cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
     }
 }

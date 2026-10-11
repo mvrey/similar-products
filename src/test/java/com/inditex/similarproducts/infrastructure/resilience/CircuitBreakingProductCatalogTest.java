@@ -1,7 +1,6 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.junit.jupiter.api.Test;
@@ -59,11 +58,11 @@ class CircuitBreakingProductCatalogTest {
     @Test
     void notFoundDoesNotCountAsFailure() {
         when(delegate.findById(id("5"))).thenReturn(Optional.empty());
-        when(delegate.findSimilarIds(id("99"))).thenThrow(new ProductNotFoundException(id("99")));
+        when(delegate.findSimilarIds(id("99"))).thenReturn(Optional.empty());
 
         for (int i = 0; i < 5; i++) {
             assertThat(catalog.findById(id("5"))).isEmpty();
-            assertThatThrownBy(() -> catalog.findSimilarIds(id("99"))).isInstanceOf(ProductNotFoundException.class);
+            assertThat(catalog.findSimilarIds(id("99"))).isEmpty();
         }
 
         verify(delegate, times(5)).findById(id("5"));

@@ -1,7 +1,6 @@
 package com.inditex.similarproducts.infrastructure.client;
 
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
@@ -49,7 +48,7 @@ class HttpProductCatalog implements ProductCatalog {
     }
 
     @Override
-    public List<ProductId> findSimilarIds(ProductId productId) {
+    public Optional<List<ProductId>> findSimilarIds(ProductId productId) {
         try {
             String[] ids = restClient.get()
                     .uri("/product/{productId}/similarids", productId.value())
@@ -57,11 +56,12 @@ class HttpProductCatalog implements ProductCatalog {
                     .body(String[].class);
 
             if (ids == null) {
-                return List.of();
+                return Optional.of(List.of());
             }
-            return Arrays.stream(ids).map(ProductId::new).toList();
+            return Optional.of(Arrays.stream(ids).map(ProductId::new).toList());
         } catch (HttpClientErrorException.NotFound e) {
-            throw new ProductNotFoundException(productId);
+            log.debug("Product {} not found", productId);
+            return Optional.empty();
         } catch (RestClientException | IllegalArgumentException e) {
             // Upstream error, timeout or an invalid id in the response
             throw new ProductCatalogUnavailableException(productId, e);

@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -73,5 +74,31 @@ class SimilarProductsControllerTest {
         mockMvc.perform(get("/product/1/similar"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.status").value(502));
+    }
+
+    @Test
+    void returns500WithoutInternalDetailsOnUnexpectedErrors() throws Exception {
+        when(getSimilarProducts.execute(new ProductId("1"))).thenThrow(new IllegalStateException("secret internals"));
+
+        mockMvc.perform(get("/product/1/similar"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.detail").value("An unexpected error occurred"));
+    }
+
+    @Test
+    void usesProblemDetailsForUnknownPaths() throws Exception {
+        mockMvc.perform(get("/unknown"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
+    void usesProblemDetailsForUnsupportedMethods() throws Exception {
+        mockMvc.perform(post("/product/1/similar"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.status").value(405));
     }
 }

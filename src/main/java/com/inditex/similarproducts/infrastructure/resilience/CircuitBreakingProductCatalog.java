@@ -50,7 +50,7 @@ public class CircuitBreakingProductCatalog implements ProductCatalog {
     }
 
     @Override
-    public List<ProductId> findSimilarIds(ProductId productId) {
+    public Optional<List<ProductId>> findSimilarIds(ProductId productId) {
         return call(similarIdsBreaker, productId, () -> delegate.findSimilarIds(productId));
     }
 

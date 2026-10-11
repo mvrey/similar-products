@@ -1,7 +1,6 @@
 package com.inditex.similarproducts.infrastructure.client;
 
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.support.FakeProductApi;
@@ -13,6 +12,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,16 +42,15 @@ class HttpProductCatalogTest {
                 .andRespond(withSuccess("[2,3,4]", MediaType.APPLICATION_JSON));
 
         assertThat(catalog.findSimilarIds(new ProductId("1")))
-                .containsExactly(new ProductId("2"), new ProductId("3"), new ProductId("4"));
+                .contains(List.of(new ProductId("2"), new ProductId("3"), new ProductId("4")));
     }
 
     @Test
-    void throwsNotFoundWhenProductHasNoSimilarIds() {
+    void returnsEmptySimilarIdsWhenProductNotFound() {
         server.expect(requestTo(BASE_URL + "/product/99/similarids"))
                 .andRespond(withStatus(HttpStatus.NOT_FOUND));
 
-        assertThatThrownBy(() -> catalog.findSimilarIds(new ProductId("99")))
-                .isInstanceOf(ProductNotFoundException.class);
+        assertThat(catalog.findSimilarIds(new ProductId("99"))).isEmpty();
     }
 
     @Test

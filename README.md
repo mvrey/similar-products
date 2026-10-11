@@ -86,7 +86,8 @@ You can see the results at http://localhost:3000/d/Le2Ku9NMk/k6-performance-test
 | The product id is blank | `400` |
 | The similar-ids service fails or is unreachable | `502` |
 
-Errors use the standard [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) *problem details* format:
+All errors, including unknown paths, unsupported methods and unexpected failures, use the standard
+[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) *problem details* format:
 
 ```json
 {"title": "Product not found", "status": 404,
@@ -111,7 +112,7 @@ com.inditex.similarproducts
     ├── rest                    Controller, response DTO, exception → HTTP mapping
     ├── client                  HTTP adapter for the existing APIs, plus the wiring of the catalog
     ├── cache                   Caching decorator
-    ├── resilience              Circuit breaker decorator
+    ├── resilience              Time limit, bulkhead and circuit breaker decorators
     └── config                  Virtual-thread executor
 ```
 
@@ -122,7 +123,13 @@ the same interface. The use case doesn't know which layers are there:
 GetSimilarProductsUseCase
         │  ProductCatalog
         ▼
-CachingProductCatalog          caches successful lookups, merges concurrent requests, enforces the lookup timeout
+TimeLimitingProductCatalog     stops waiting after the lookup timeout (the lookup itself carries on)
+        │  ProductCatalog
+        ▼
+CachingProductCatalog          caches successful lookups, merges concurrent requests
+        │  ProductCatalog
+        ▼
+BulkheadProductCatalog         caps how many upstream calls run at the same time
         │  ProductCatalog
         ▼
 CircuitBreakingProductCatalog  stops calling upstreams that keep failing
@@ -138,7 +145,7 @@ How this maps to SOLID:
 
 - **Single responsibility:** the controller only translates HTTP. The use case only coordinates. Each decorator
   handles one concern.
-- **Open/closed:** caching and circuit breaking were added as new classes. The use case, the controller and the
+- **Open/closed:** the time limit, caching, bulkhead and circuit breaking were added as new classes. The use case, the controller and the
   HTTP adapter didn't change.
 - **Liskov substitution:** any `ProductCatalog` can replace another. The decorators keep the port's contract,
   including which exceptions it throws.
@@ -163,15 +170,15 @@ The contract doesn't say what to do when one similar product can't be retrieved.
 return the rest**. One broken product shouldn't hide the others, which is the expected behaviour for a
 "you may also like" feature. A `404` is returned only when the **requested** product doesn't exist.
 
-The port separates the two cases:
+The port separates the two cases, in the same way for both of its operations:
 
 - `Optional.empty()` means the product doesn't exist.
 - `ProductCatalogUnavailableException` means the product couldn't be retrieved (error, timeout, invalid data, or
   circuit open).
 
 This lets each layer treat them differently. For example, "not found" doesn't count as a circuit-breaker failure.
-The rule "leave unavailable products out" is a business decision, so it lives in the use case and not in the HTTP
-adapter.
+What a missing product means is a business decision, so it lives in the use case, not in the adapters: a missing
+**requested** product becomes a `404`, while a missing or unavailable **similar** product is left out.
 
 ### Two timeouts: how long a request waits, and how long an upstream call may run
 
@@ -181,7 +188,8 @@ adapter.
 | `product-api.read-timeout` | `10s` | How long a single **upstream call** may run before it counts as a failure |
 | `product-api.connect-timeout` | `1s` | How long to wait when opening a connection |
 
-When a product takes longer than the lookup timeout, the request returns without it. The upstream call keeps
+When a product takes longer than the lookup timeout, the request returns without it. The time limit is a separate
+decorator *above* the cache, and it never cancels the lookup it stops waiting for. So the upstream call keeps
 running in the background, and when it finishes the result goes into the cache. In the mock data, product `1000`
 takes 5 s. The first request leaves it out after 3 s, and every later request gets it from the cache in
 milliseconds. Product `10000` takes 50 s, which is longer than the read timeout, so it is treated as broken.
@@ -199,8 +207,8 @@ async mode:
 - **Concurrent requests for the same product share one upstream call.** The cache stores the in-flight lookup, not
   only the finished result. When 200 users ask for the same uncached product at the same time, the upstream gets
   one call, not 200.
-- **Waiting doesn't cancel the shared lookup.** A request that gives up after the lookup timeout leaves the call
-  running for the other waiting requests and for the cache.
+- **Giving up doesn't cancel the shared lookup.** A request that stops waiting after the lookup timeout leaves the
+  call running for the other waiting requests and for the cache.
 - Entries expire after `10m` (`product-catalog.cache.ttl`), with at most 10,000 entries per cache.
 
 **Trade-off:** prices and availability can be up to 10 minutes old. That is acceptable for product
@@ -231,6 +239,28 @@ stays bounded. Only `ProductCatalogUnavailableException` counts as a failure. A 
 The cache wraps the breakers, so cached products are still served while a breaker is open. I tested this by
 stopping the mock server. Cached products were still returned with `200` in about 3 ms. Uncached products failed
 fast with `502`, and the similar-ids breaker opened after 5 failures.
+
+### A bulkhead protects the existing APIs
+
+Requests run on virtual threads, which are almost free, so nothing would stop a traffic spike from opening thousands
+of upstream calls at once. A [Resilience4j](https://resilience4j.readme.io/) bulkhead caps them: at most `200` calls
+run at the same time, and a call that can't get a slot within `500ms` is treated as unavailable (the product is
+left out, or the request gets a `502`). Cached and coalesced lookups never reach the bulkhead, so in normal traffic
+it is far from full.
+
+The bulkhead sits *above* the circuit breakers. A call rejected because of our own load says nothing about the
+health of the upstream, so it must not count towards opening a breaker.
+
+| Setting (`product-catalog.bulkhead.*`) | Default |
+|---|---|
+| `max-concurrent-calls` | `200` |
+| `max-wait-duration` | `500ms` |
+
+### Quiet logs for expected failures
+
+Upstream failures are expected and can be frequent (product `6` in the mocks fails on every call). A failed request
+is logged as one `WARN` line with its root cause and no stack trace. Skipped similar products are logged at `DEBUG`,
+and circuit breakers log when they open and close. Stack traces are kept for unexpected errors, which are bugs.
 
 ### No retries
 
@@ -265,16 +295,18 @@ before the cache is warm. The results are the same with the service running in D
 
 ## Tests
 
-49 tests, run with `./mvnw test`:
+55 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|
 | `ProductTest` | Domain validation: invalid products can't be created |
 | `GetSimilarProductsUseCaseTest` | Ordering, skipping, parallelism (uses a mocked port) |
 | `HttpProductCatalogTest` | HTTP adapter: JSON mapping and how each error status is handled (uses Spring's `MockRestServiceServer`) |
-| `CachingProductCatalogTest` | Caching, no caching of failures, background refill, request coalescing |
+| `CachingProductCatalogTest` | Caching, expiry, no caching of failures or missing products, request coalescing |
+| `TimeLimitingProductCatalogTest` | Gives up after the timeout without cancelling the lookup |
+| `BulkheadProductCatalogTest` | Rejects calls beyond the concurrency limit |
 | `CircuitBreakingProductCatalogTest` | Breakers open, stay per product, ignore 404s, and recover |
-| `SimilarProductsControllerTest` | Web layer: JSON format and status codes (`@WebMvcTest`) |
+| `SimilarProductsControllerTest` | Web layer: JSON format, status codes and problem details for every error (`@WebMvcTest`) |
 | `SimilarProductsEndToEndTest` | The full application on a random port against a fake HTTP API built on the JDK's `HttpServer` |
 
 ---
@@ -299,5 +331,5 @@ PRODUCT_CATALOG_LOOKUP_TIMEOUT=2s
 - **Shared cache:** with several instances behind a load balancer, a shared cache such as Redis would avoid each
   instance warming its own cache.
 - **Contract tests:** check responses automatically against `similarProducts.yaml`.
-- **Bulkhead / rate limiting:** cap concurrent upstream calls to protect the existing APIs during traffic spikes.
+- **Rate limiting:** limit incoming requests per client, to protect this service itself.
 - **CI pipeline:** build, test and publish the Docker image on every push.

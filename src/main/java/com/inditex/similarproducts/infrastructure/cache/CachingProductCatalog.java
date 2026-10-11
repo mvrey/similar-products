@@ -7,94 +7,78 @@ import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableExc
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 
 /**
  * Decorator that caches the results of another ProductCatalog.
  * <ul>
- *   <li>Only successful lookups are cached: failures are retried on the next request.</li>
- *   <li>Concurrent requests for the same product share a single in-flight upstream call.</li>
- *   <li>Callers wait at most {@code lookupTimeout}; a slower upstream call keeps running in the
- *       background and fills the cache for later requests.</li>
+ *   <li>Only successful lookups are cached: failures and missing products are looked up again next time.</li>
+ *   <li>Concurrent requests for the same product share a single in-flight upstream call. The call is not
+ *       cancelled when a caller stops waiting, so it still fills the cache for later requests.</li>
  * </ul>
  */
 public class CachingProductCatalog implements ProductCatalog {
 
-    private static final Logger log = LoggerFactory.getLogger(CachingProductCatalog.class);
-
     private final ProductCatalog delegate;
-    private final Duration lookupTimeout;
     private final AsyncCache<ProductId, List<ProductId>> similarIdsCache;
     private final AsyncCache<ProductId, Product> productCache;
 
-    public CachingProductCatalog(ProductCatalog delegate, Duration lookupTimeout, Duration ttl,
-                                 long maximumSize, Executor executor) {
-        this(delegate, lookupTimeout, ttl, maximumSize, executor, Ticker.systemTicker());
+    public CachingProductCatalog(ProductCatalog delegate, Duration ttl, long maximumSize, Executor executor) {
+        this(delegate, ttl, maximumSize, executor, Ticker.systemTicker());
     }
 
     /**
      * Lets tests control the clock used for expiry.
      */
-    CachingProductCatalog(ProductCatalog delegate, Duration lookupTimeout, Duration ttl,
-                          long maximumSize, Executor executor, Ticker ticker) {
+    CachingProductCatalog(ProductCatalog delegate, Duration ttl, long maximumSize, Executor executor,
+                          Ticker ticker) {
         this.delegate = delegate;
-        this.lookupTimeout = lookupTimeout;
         this.similarIdsCache = newCache(ttl, maximumSize, executor, ticker);
         this.productCache = newCache(ttl, maximumSize, executor, ticker);
     }
 
     @Override
-    public List<ProductId> findSimilarIds(ProductId productId) {
-        CompletableFuture<List<ProductId>> lookup = similarIdsCache.get(productId,
-                (id, executor) -> CompletableFuture.supplyAsync(() -> delegate.findSimilarIds(id), executor));
-        try {
-            return await(lookup);
-        } catch (TimeoutException e) {
-            throw new ProductCatalogUnavailableException(productId, e);
-        } catch (ExecutionException e) {
-            evict(similarIdsCache, productId, lookup);
-            throw rethrowable(productId, e);
-        }
+    public Optional<List<ProductId>> findSimilarIds(ProductId productId) {
+        return lookUp(similarIdsCache, productId, delegate::findSimilarIds);
     }
 
     @Override
     public Optional<Product> findById(ProductId productId) {
-        // A missing product is loaded as null, which Caffeine does not store, so it is looked up again next time
-        CompletableFuture<Product> lookup = productCache.get(productId,
-                (id, executor) -> CompletableFuture.supplyAsync(() -> delegate.findById(id).orElse(null), executor));
+        return lookUp(productCache, productId, delegate::findById);
+    }
+
+    private static <V> Optional<V> lookUp(AsyncCache<ProductId, V> cache, ProductId productId,
+                                          Function<ProductId, Optional<V>> loader) {
+        // A missing product is loaded as null, which Caffeine does not store
+        CompletableFuture<V> lookup = cache.get(productId,
+                (id, executor) -> CompletableFuture.supplyAsync(() -> loader.apply(id).orElse(null), executor));
         try {
-            Product product = await(lookup);
-            if (product == null) {
-                evict(productCache, productId, lookup);
+            V value = lookup.join();
+            if (value == null) {
+                evict(cache, productId, lookup);
             }
-            return Optional.ofNullable(product);
-        } catch (TimeoutException e) {
-            log.debug("Product {} not available within {}", productId, lookupTimeout);
-            throw new ProductCatalogUnavailableException(productId, e);
-        } catch (ExecutionException e) {
-            evict(productCache, productId, lookup);
-            throw rethrowable(productId, e);
+            return Optional.ofNullable(value);
+        } catch (CompletionException e) {
+            evict(cache, productId, lookup);
+            throw rethrowable(productId, e.getCause());
         }
     }
 
     /**
      * Unwraps the exception thrown by the delegate so callers see the same exceptions as without the cache.
      */
-    private static RuntimeException rethrowable(ProductId productId, ExecutionException e) {
-        if (e.getCause() instanceof RuntimeException cause) {
-            return cause;
+    private static RuntimeException rethrowable(ProductId productId, Throwable cause) {
+        if (cause instanceof RuntimeException runtimeException) {
+            return runtimeException;
         }
-        return new ProductCatalogUnavailableException(productId, e.getCause());
+        return new ProductCatalogUnavailableException(productId, cause);
     }
 
     /**
@@ -103,18 +87,6 @@ public class CachingProductCatalog implements ProductCatalog {
      */
     private static <V> void evict(AsyncCache<ProductId, V> cache, ProductId productId, CompletableFuture<V> lookup) {
         cache.asMap().remove(productId, lookup);
-    }
-
-    /**
-     * Waits for a shared lookup without cancelling it, so other callers and the cache still get its result.
-     */
-    private <T> T await(CompletableFuture<T> lookup) throws TimeoutException, ExecutionException {
-        try {
-            return lookup.get(lookupTimeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Interrupted while waiting for product lookup", e);
-        }
     }
 
     private static <V> AsyncCache<ProductId, V> newCache(Duration ttl, long maximumSize, Executor executor,
