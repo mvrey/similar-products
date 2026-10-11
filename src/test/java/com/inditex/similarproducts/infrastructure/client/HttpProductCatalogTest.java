@@ -62,6 +62,24 @@ class HttpProductCatalogTest {
     }
 
     @Test
+    void throwsUnavailableWhenSimilarIdsContainABlankId() {
+        server.expect(requestTo(BASE_URL + "/product/1/similarids"))
+                .andRespond(withSuccess("[\"2\",\"\"]", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> catalog.findSimilarIds(new ProductId("1")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
+    }
+
+    @Test
+    void throwsUnavailableWhenSimilarIdsContainANullId() {
+        server.expect(requestTo(BASE_URL + "/product/1/similarids"))
+                .andRespond(withSuccess("[\"2\",null]", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> catalog.findSimilarIds(new ProductId("1")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
+    }
+
+    @Test
     void findsProductDetail() {
         server.expect(requestTo(BASE_URL + "/product/1"))
                 .andRespond(withSuccess("""
@@ -103,6 +121,28 @@ class HttpProductCatalogTest {
                         """, MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> catalog.findById(new ProductId("7")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
+    }
+
+    @Test
+    void throwsUnavailableWhenProductAvailabilityIsMissing() {
+        server.expect(requestTo(BASE_URL + "/product/8"))
+                .andRespond(withSuccess("""
+                        {"id":"8","name":"Shirt","price":9.99}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> catalog.findById(new ProductId("8")))
+                .isInstanceOf(ProductCatalogUnavailableException.class);
+    }
+
+    @Test
+    void throwsUnavailableWhenProductPriceIsMissing() {
+        server.expect(requestTo(BASE_URL + "/product/9"))
+                .andRespond(withSuccess("""
+                        {"id":"9","name":"Shirt","availability":true}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> catalog.findById(new ProductId("9")))
                 .isInstanceOf(ProductCatalogUnavailableException.class);
     }
 }

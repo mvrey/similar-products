@@ -139,6 +139,15 @@ class SimilarProductsEndToEndTest {
         JSONAssert.assertEquals("{\"status\":502}", response.body(), JSONCompareMode.LENIENT);
     }
 
+    @Test
+    void returns502WhenSimilarIdsServiceSendsAnInvalidId() throws Exception {
+        productApi.respond("/product/60/similarids", 200, "[\"61\",\"\"]");
+
+        HttpResponse<String> response = get("/product/60/similar");
+
+        assertThat(response.statusCode()).isEqualTo(502);
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());

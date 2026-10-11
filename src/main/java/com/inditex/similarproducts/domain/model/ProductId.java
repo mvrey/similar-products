@@ -2,16 +2,13 @@ package com.inditex.similarproducts.domain.model;
 
 import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
 
-import java.util.Objects;
-
 /**
  * Identifier of a product. A value object: two ProductIds with the same value are equal.
  */
 public record ProductId(String value) {
 
     public ProductId {
-        Objects.requireNonNull(value, "Product id must not be null");
-        if (value.isBlank()) {
+        if (value == null || value.isBlank()) {
             throw new InvalidProductIdException("Product id must not be blank");
         }
     }

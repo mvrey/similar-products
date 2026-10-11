@@ -29,7 +29,7 @@ class ProductTest {
     @Test
     void rejectsMissingPrice() {
         assertThatThrownBy(() -> new Product(new ProductId("1"), "Shirt", null, true))
-                .isInstanceOf(NullPointerException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

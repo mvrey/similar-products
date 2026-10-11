@@ -265,7 +265,7 @@ before the cache is warm. The results are the same with the service running in D
 
 ## Tests
 
-44 tests, run with `./mvnw test`:
+49 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|

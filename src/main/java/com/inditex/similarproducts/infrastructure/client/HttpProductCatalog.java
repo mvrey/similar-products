@@ -42,7 +42,8 @@ class HttpProductCatalog implements ProductCatalog {
             return Arrays.stream(ids).map(ProductId::new).toList();
         } catch (HttpClientErrorException.NotFound e) {
             throw new ProductNotFoundException(productId);
-        } catch (RestClientException e) {
+        } catch (RestClientException | IllegalArgumentException e) {
+            // Upstream error, timeout or an invalid id in the response
             throw new ProductCatalogUnavailableException(productId, e);
         }
     }
@@ -59,7 +60,7 @@ class HttpProductCatalog implements ProductCatalog {
         } catch (HttpClientErrorException.NotFound e) {
             log.debug("Product {} not found", productId);
             return Optional.empty();
-        } catch (RestClientException | IllegalArgumentException | NullPointerException e) {
+        } catch (RestClientException | IllegalArgumentException e) {
             // Upstream error, timeout or a response that is not a valid product
             throw new ProductCatalogUnavailableException(productId, e);
         }
