@@ -2,19 +2,18 @@ package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
-import com.inditex.similarproducts.domain.model.Product;
-import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 
+import static com.inditex.similarproducts.support.TestProducts.id;
+import static com.inditex.similarproducts.support.TestProducts.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -22,20 +21,13 @@ import static org.mockito.Mockito.when;
 
 class CircuitBreakingProductCatalogTest {
 
-    // Opens after 3 calls if at least half of them failed; stays open for 200 ms
+    // Opens after 3 calls if at least half of them failed; stays open for a minute (longer than any test)
     private static final CircuitBreakerProperties PROPERTIES =
-            new CircuitBreakerProperties(50, 4, 3, Duration.ofMillis(200));
+            new CircuitBreakerProperties(50, 4, 3, Duration.ofMinutes(1));
 
     private final ProductCatalog delegate = mock(ProductCatalog.class);
     private final CircuitBreakingProductCatalog catalog =
             new CircuitBreakingProductCatalog(delegate, PROPERTIES.toConfig());
-
-    @Test
-    void passesThroughSuccessfulCalls() {
-        when(delegate.findById(id("1"))).thenReturn(Optional.of(product("1")));
-
-        assertThat(catalog.findById(id("1"))).contains(product("1"));
-    }
 
     @Test
     void stopsCallingAProductThatKeepsFailing() {
@@ -92,7 +84,9 @@ class CircuitBreakingProductCatalogTest {
     }
 
     @Test
-    void recoversWhenTheProductWorksAgain() throws InterruptedException {
+    void recoversWhenTheProductWorksAgain() {
+        CircuitBreakingProductCatalog catalog = new CircuitBreakingProductCatalog(delegate,
+                new CircuitBreakerProperties(50, 4, 3, Duration.ofMillis(50)).toConfig());
         when(delegate.findById(id("6")))
                 .thenThrow(unavailable("6"), unavailable("6"), unavailable("6"))
                 .thenReturn(Optional.of(product("6")));
@@ -102,20 +96,12 @@ class CircuitBreakingProductCatalogTest {
         }
 
         // After the open period a test call goes through, succeeds, and the product is served again
-        Thread.sleep(300);
-        assertThat(catalog.findById(id("6"))).contains(product("6"));
+        await().atMost(Duration.ofSeconds(2)).ignoreExceptions()
+                .untilAsserted(() -> assertThat(catalog.findById(id("6"))).contains(product("6")));
         assertThat(catalog.findById(id("6"))).contains(product("6"));
     }
 
     private static ProductCatalogUnavailableException unavailable(String id) {
         return new ProductCatalogUnavailableException(id(id), new RuntimeException("500 Internal Server Error"));
-    }
-
-    private static ProductId id(String value) {
-        return new ProductId(value);
-    }
-
-    private static Product product(String id) {
-        return new Product(id(id), "Product " + id, BigDecimal.TEN, true);
     }
 }

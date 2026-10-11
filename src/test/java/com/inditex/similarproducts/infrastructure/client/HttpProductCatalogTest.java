@@ -4,6 +4,7 @@ import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableExc
 import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
+import com.inditex.similarproducts.support.FakeProductApi;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -11,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -144,5 +146,19 @@ class HttpProductCatalogTest {
 
         assertThatThrownBy(() -> catalog.findById(new ProductId("9")))
                 .isInstanceOf(ProductCatalogUnavailableException.class);
+    }
+
+    @Test
+    void throwsUnavailableWhenProductServiceIsSlowerThanTheReadTimeout() {
+        try (FakeProductApi slowApi = new FakeProductApi()) {
+            slowApi.respond("/product/1", 200, """
+                    {"id":"1","name":"Shirt","price":9.99,"availability":true}
+                    """, Duration.ofSeconds(2));
+            HttpProductCatalog realClientCatalog = HttpProductCatalog.create(RestClient.builder(),
+                    new ProductApiProperties(slowApi.baseUrl(), Duration.ofSeconds(1), Duration.ofMillis(200)));
+
+            assertThatThrownBy(() -> realClientCatalog.findById(new ProductId("1")))
+                    .isInstanceOf(ProductCatalogUnavailableException.class);
+        }
     }
 }

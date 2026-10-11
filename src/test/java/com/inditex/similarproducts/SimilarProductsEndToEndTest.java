@@ -1,5 +1,6 @@
 package com.inditex.similarproducts;
 
+import com.inditex.similarproducts.support.FakeProductApi;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.skyscreamer.jsonassert.JSONAssert;
@@ -16,10 +17,13 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 /**
  * Runs the whole application on a random port against a fake product API.
- * Each test uses its own product ids, because the cache is shared by all tests.
+ * <p>
+ * All tests share one application context, so its caches and circuit breakers keep their state between
+ * tests. To stay independent, each test uses its own range of product ids (1x, 2x, 3x...).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "product-api.read-timeout=2s",
@@ -87,12 +91,11 @@ class SimilarProductsEndToEndTest {
                 .respond("/product/22", 200, product("22", "Coat", "89.99", true), Duration.ofSeconds(1));
 
         HttpResponse<String> first = get("/product/20/similar");
-        JSONAssert.assertEquals("[{\"id\":\"21\"}]", first.body(), JSONCompareMode.LENIENT);
+        JSONAssert.assertEquals("[{\"id\":\"21\"}]", first.body(), JSONCompareMode.STRICT_ORDER);
 
-        Thread.sleep(1200);
-
-        HttpResponse<String> second = get("/product/20/similar");
-        JSONAssert.assertEquals("[{\"id\":\"21\"},{\"id\":\"22\"}]", second.body(), JSONCompareMode.STRICT_ORDER);
+        // The upstream call keeps running after the first response and fills the cache
+        await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> JSONAssert.assertEquals(
+                "[{\"id\":\"21\"},{\"id\":\"22\"}]", get("/product/20/similar").body(), JSONCompareMode.STRICT_ORDER));
         assertThat(productApi.hits("/product/22")).isEqualTo(1);
     }
 

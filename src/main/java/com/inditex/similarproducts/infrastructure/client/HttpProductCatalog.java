@@ -7,10 +7,12 @@ import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.domain.port.ProductCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.net.http.HttpClient;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +28,24 @@ class HttpProductCatalog implements ProductCatalog {
 
     HttpProductCatalog(RestClient productApiRestClient) {
         this.restClient = productApiRestClient;
+    }
+
+    /**
+     * Creates an adapter whose HTTP client applies the configured base URL and timeouts.
+     */
+    static HttpProductCatalog create(RestClient.Builder builder, ProductApiProperties properties) {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(properties.connectTimeout())
+                .build();
+
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(properties.readTimeout());
+
+        return new HttpProductCatalog(builder
+                .baseUrl(properties.baseUrl())
+                .requestFactory(requestFactory)
+                .build());
     }
 
     @Override

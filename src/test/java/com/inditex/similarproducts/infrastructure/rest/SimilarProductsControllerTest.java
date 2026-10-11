@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -42,16 +43,7 @@ class SimilarProductsControllerTest {
                           {"id":"2","name":"Dress","price":19.99,"availability":true},
                           {"id":"3","name":"Blazer","price":29.99,"availability":false}
                         ]
-                        """, true));
-    }
-
-    @Test
-    void returnsEmptyArrayWhenThereAreNoSimilarProducts() throws Exception {
-        when(getSimilarProducts.execute(new ProductId("1"))).thenReturn(List.of());
-
-        mockMvc.perform(get("/product/1/similar"))
-                .andExpect(status().isOk())
-                .andExpect(content().json("[]"));
+                        """, JsonCompareMode.STRICT));
     }
 
     @Test

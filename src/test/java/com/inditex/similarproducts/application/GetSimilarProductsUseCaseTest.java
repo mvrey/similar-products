@@ -9,18 +9,21 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
+import static com.inditex.similarproducts.support.TestProducts.id;
+import static com.inditex.similarproducts.support.TestProducts.product;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +54,18 @@ class GetSimilarProductsUseCaseTest {
         assertThat(useCase.execute(id("1")))
                 .extracting(Product::id)
                 .containsExactly(id("2"), id("3"), id("4"));
+    }
+
+    @Test
+    void returnsEachSimilarProductOnlyOnce() {
+        when(catalog.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3"), id("2")));
+        when(catalog.findById(id("2"))).thenReturn(Optional.of(product("2")));
+        when(catalog.findById(id("3"))).thenReturn(Optional.of(product("3")));
+
+        assertThat(useCase.execute(id("1")))
+                .extracting(Product::id)
+                .containsExactly(id("2"), id("3"));
+        verify(catalog, times(1)).findById(id("2"));
     }
 
     @Test
@@ -96,26 +111,14 @@ class GetSimilarProductsUseCaseTest {
 
     @Test
     void fetchesProductDetailsInParallel() {
+        // Each lookup waits until all three are running at the same time; one at a time, the barrier would time out
+        CyclicBarrier allLookupsRunning = new CyclicBarrier(3);
         when(catalog.findSimilarIds(id("1"))).thenReturn(List.of(id("2"), id("3"), id("4")));
         when(catalog.findById(any())).thenAnswer(invocation -> {
-            Thread.sleep(500);
+            allLookupsRunning.await(5, TimeUnit.SECONDS);
             return Optional.of(product(invocation.<ProductId>getArgument(0).value()));
         });
 
-        long start = System.nanoTime();
-        List<Product> result = useCase.execute(id("1"));
-        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
-
-        assertThat(result).hasSize(3);
-        // Sequentially this would take at least 1500 ms
-        assertThat(elapsed).isLessThan(Duration.ofMillis(1200));
-    }
-
-    private static ProductId id(String value) {
-        return new ProductId(value);
-    }
-
-    private static Product product(String id) {
-        return new Product(id(id), "Product " + id, BigDecimal.TEN, true);
+        assertThat(useCase.execute(id("1"))).hasSize(3);
     }
 }

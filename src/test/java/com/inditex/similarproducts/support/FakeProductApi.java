@@ -1,4 +1,4 @@
-package com.inditex.similarproducts;
+package com.inditex.similarproducts.support;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Minimal stand-in for the external product APIs, built on the JDK's own HTTP server.
  * Unknown paths answer 404, like the real mocks.
  */
-class FakeProductApi implements AutoCloseable {
+public class FakeProductApi implements AutoCloseable {
 
     private record Response(int status, String body, Duration delay) {
     }
@@ -27,7 +27,7 @@ class FakeProductApi implements AutoCloseable {
     private final Map<String, Response> responses = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
 
-    FakeProductApi() {
+    public FakeProductApi() {
         try {
             server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
         } catch (IOException e) {
@@ -38,20 +38,20 @@ class FakeProductApi implements AutoCloseable {
         server.start();
     }
 
-    String baseUrl() {
+    public String baseUrl() {
         return "http://localhost:" + server.getAddress().getPort();
     }
 
-    FakeProductApi respond(String path, int status, String body) {
+    public FakeProductApi respond(String path, int status, String body) {
         return respond(path, status, body, Duration.ZERO);
     }
 
-    FakeProductApi respond(String path, int status, String body, Duration delay) {
+    public FakeProductApi respond(String path, int status, String body, Duration delay) {
         responses.put(path, new Response(status, body, delay));
         return this;
     }
 
-    int hits(String path) {
+    public int hits(String path) {
         return hits.getOrDefault(path, new AtomicInteger()).get();
     }
 

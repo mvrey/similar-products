@@ -2,6 +2,7 @@ package com.inditex.similarproducts.infrastructure.cache;
 
 import com.github.benmanes.caffeine.cache.AsyncCache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
@@ -38,10 +39,18 @@ public class CachingProductCatalog implements ProductCatalog {
 
     public CachingProductCatalog(ProductCatalog delegate, Duration lookupTimeout, Duration ttl,
                                  long maximumSize, Executor executor) {
+        this(delegate, lookupTimeout, ttl, maximumSize, executor, Ticker.systemTicker());
+    }
+
+    /**
+     * Lets tests control the clock used for expiry.
+     */
+    CachingProductCatalog(ProductCatalog delegate, Duration lookupTimeout, Duration ttl,
+                          long maximumSize, Executor executor, Ticker ticker) {
         this.delegate = delegate;
         this.lookupTimeout = lookupTimeout;
-        this.similarIdsCache = newCache(ttl, maximumSize, executor);
-        this.productCache = newCache(ttl, maximumSize, executor);
+        this.similarIdsCache = newCache(ttl, maximumSize, executor, ticker);
+        this.productCache = newCache(ttl, maximumSize, executor, ticker);
     }
 
     @Override
@@ -108,9 +117,11 @@ public class CachingProductCatalog implements ProductCatalog {
         }
     }
 
-    private static <V> AsyncCache<ProductId, V> newCache(Duration ttl, long maximumSize, Executor executor) {
+    private static <V> AsyncCache<ProductId, V> newCache(Duration ttl, long maximumSize, Executor executor,
+                                                         Ticker ticker) {
         return Caffeine.newBuilder()
                 .expireAfterWrite(ttl)
+                .ticker(ticker)
                 .maximumSize(maximumSize)
                 .executor(executor)
                 .buildAsync();

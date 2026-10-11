@@ -8,10 +8,8 @@ import com.inditex.similarproducts.infrastructure.resilience.CircuitBreakingProd
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
 import java.util.concurrent.Executor;
 
 /**
@@ -27,7 +25,7 @@ class ProductCatalogConfig {
     ProductCatalog productCatalog(RestClient.Builder restClientBuilder, ProductApiProperties apiProperties,
                                   ProductCatalogProperties catalogProperties,
                                   CircuitBreakerProperties circuitBreakerProperties, Executor productLookupExecutor) {
-        ProductCatalog httpCatalog = new HttpProductCatalog(productApiRestClient(restClientBuilder, apiProperties));
+        ProductCatalog httpCatalog = HttpProductCatalog.create(restClientBuilder, apiProperties);
         ProductCatalog protectedCatalog = new CircuitBreakingProductCatalog(httpCatalog,
                 circuitBreakerProperties.toConfig());
 
@@ -37,20 +35,5 @@ class ProductCatalogConfig {
                 catalogProperties.cache().ttl(),
                 catalogProperties.cache().maximumSize(),
                 productLookupExecutor);
-    }
-
-    private static RestClient productApiRestClient(RestClient.Builder builder, ProductApiProperties properties) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(properties.connectTimeout())
-                .build();
-
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(properties.readTimeout());
-
-        return builder
-                .baseUrl(properties.baseUrl())
-                .requestFactory(requestFactory)
-                .build();
     }
 }
