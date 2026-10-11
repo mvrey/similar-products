@@ -54,7 +54,8 @@ public class PerProductCircuitBreakingCatalog implements ProductCatalog {
      * per product).
      */
     public void registerMetrics(MeterRegistry meterRegistry) {
-        Gauge.builder("product.catalog.product.breakers.open", breakers, PerProductCircuitBreakingCatalog::countOpen)
+        Gauge.builder("product.catalog.product.breakers.open", breakers,
+                        PerProductCircuitBreakingCatalog::countOpen)
                 .description("Per-product circuit breakers that are currently open")
                 .register(meterRegistry);
     }

@@ -17,8 +17,11 @@ class ConcurrencyConfig {
 
     /**
      * One virtual thread per product lookup: lookups are I/O bound, so they are cheap to run in parallel.
+     * <p>
+     * On shutdown (after Spring has let in-flight requests finish), lookups still running only fill the cache
+     * for requests that will never come, so they are interrupted rather than waited for.
      */
-    @Bean(name = PRODUCT_LOOKUP_EXECUTOR, destroyMethod = "close")
+    @Bean(name = PRODUCT_LOOKUP_EXECUTOR, destroyMethod = "shutdownNow")
     ExecutorService productLookupExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
     }

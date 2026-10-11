@@ -41,9 +41,10 @@ class ProductCatalogConfig {
     }
 
     @Bean
-    ProductCatalog productCatalog(RestClient.Builder restClientBuilder, ProductApiProperties apiProperties,
-                                  ProductCatalogProperties properties, MeterRegistry meterRegistry,
-                                  @Qualifier(ConcurrencyConfig.PRODUCT_LOOKUP_EXECUTOR) Executor productLookupExecutor) {
+    ProductCatalog productCatalog(
+            RestClient.Builder restClientBuilder, ProductApiProperties apiProperties,
+            ProductCatalogProperties properties, MeterRegistry meterRegistry,
+            @Qualifier(ConcurrencyConfig.PRODUCT_LOOKUP_EXECUTOR) Executor productLookupExecutor) {
         HttpProductCatalog http = HttpProductCatalog.create(restClientBuilder, apiProperties);
 
         // Below the cache: cached similar ids are still served while this breaker is open

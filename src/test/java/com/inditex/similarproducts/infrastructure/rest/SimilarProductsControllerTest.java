@@ -72,6 +72,12 @@ class SimilarProductsControllerTest {
     }
 
     @Test
+    void returns400WhenProductIdContainsControlCharacters() throws Exception {
+        mockMvc.perform(get("/product/{productId}/similar", "1\nFAKE LOG LINE"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void returns502WhenCatalogIsUnavailable() throws Exception {
         when(getSimilarProducts.execute(new ProductId("1")))
                 .thenThrow(new ProductCatalogUnavailableException(new ProductId("1"), new RuntimeException("boom")));

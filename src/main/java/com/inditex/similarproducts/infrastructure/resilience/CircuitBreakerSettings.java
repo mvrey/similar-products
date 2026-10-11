@@ -3,6 +3,9 @@ package com.inditex.similarproducts.infrastructure.resilience;
 import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
 import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.time.Duration;
 
@@ -16,9 +19,12 @@ import java.time.Duration;
  * @param idleProductBreakerExpiry how long an unused per-product breaker is kept before it is forgotten
  * @param maxProductBreakers       upper bound on the number of per-product breakers kept in memory
  */
-public record CircuitBreakerSettings(float failureRateThreshold, int slidingWindowSize, int minimumNumberOfCalls,
-                                     Duration waitDurationInOpenState, Duration idleProductBreakerExpiry,
-                                     long maxProductBreakers) {
+public record CircuitBreakerSettings(@Positive @DecimalMax("100") float failureRateThreshold,
+                                     @Positive int slidingWindowSize,
+                                     @Positive int minimumNumberOfCalls,
+                                     @NotNull Duration waitDurationInOpenState,
+                                     @NotNull Duration idleProductBreakerExpiry,
+                                     @Positive long maxProductBreakers) {
 
     /**
      * Only an unavailable catalog (error, timeout, invalid data) counts as a failure. "Not found" is a valid

@@ -1,5 +1,8 @@
 package com.inditex.similarproducts.infrastructure.cache;
 
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+
 import java.time.Duration;
 
 /**
@@ -10,5 +13,6 @@ import java.time.Duration;
  * @param refreshAfter age after which an entry that is read is reloaded in the background (shorter than ttl)
  * @param maximumSize  maximum number of entries per cache
  */
-public record CacheSettings(Duration ttl, Duration notFoundTtl, Duration refreshAfter, long maximumSize) {
+public record CacheSettings(@NotNull Duration ttl, @NotNull Duration notFoundTtl, @NotNull Duration refreshAfter,
+                            @Positive long maximumSize) {
 }

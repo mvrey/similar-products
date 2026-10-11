@@ -18,8 +18,8 @@ import java.util.function.Supplier;
 
 /**
  * Decorator that limits how long a caller waits for another ProductCatalog.
- * A lookup that takes longer is reported as a {@link ProductCatalogTimeoutException}. It is not cancelled, so a slower upstream
- * call still completes in the background and can fill the cache below this decorator.
+ * A lookup that takes longer is reported as a {@link ProductCatalogTimeoutException}. It is not cancelled, so a
+ * slower upstream call still completes in the background and can fill the cache below this decorator.
  */
 public class TimeLimitingProductCatalog implements ProductCatalog {
 

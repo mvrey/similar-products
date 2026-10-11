@@ -28,6 +28,12 @@ class ProductTest {
     }
 
     @Test
+    void rejectsIdsWithControlCharacters() {
+        assertThatThrownBy(() -> new ProductId("1\nFAKE LOG LINE"))
+                .isInstanceOf(InvalidProductIdException.class);
+    }
+
+    @Test
     void rejectsMissingId() {
         assertThatThrownBy(() -> new ProductId(null))
                 .isInstanceOf(InvalidProductIdException.class);

@@ -42,6 +42,8 @@ Then start the service on port **5000** with one of these options.
 docker compose up --build
 ```
 
+The container has a health check on `/actuator/health`, so `docker ps` shows it as `healthy` once it is ready.
+
 ### Option B: Maven wrapper (needs JDK 25)
 
 ```bash
@@ -83,7 +85,7 @@ You can see the results at http://localhost:3000/d/Le2Ku9NMk/k6-performance-test
 | Product has no similar products | `200` with `[]` |
 | A similar product doesn't exist, fails, or is too slow | `200`: that product is **left out** and the others are returned |
 | The requested product doesn't exist | `404` |
-| The product id is blank | `400` |
+| The product id is blank or contains control characters | `400` |
 | The similar-ids service fails or is unreachable | `502` |
 | The similar-ids service doesn't answer within the lookup timeout | `504` |
 | Too many upstream calls are already in progress (bulkhead full) | `503` |
@@ -316,11 +318,17 @@ Actuator exposes `/actuator/health` and `/actuator/metrics`, including:
 Per-product breakers are reported as a single count: one set of meters per product would create thousands of
 time series.
 
+For this exercise Actuator shares port 5000 with the API. In production it would move to a separate port that only
+the monitoring system can reach (`management.server.port`), since metrics reveal details about the service.
+
 ### Quiet logs for expected failures
 
 Upstream failures are expected and can be frequent (product `6` in the mocks fails on every call). A failed request
 is logged as one `WARN` line with its root cause and no stack trace. Skipped similar products are logged at `DEBUG`,
 and circuit breakers log when they open and close. Stack traces are kept for unexpected errors, which are bugs.
+
+Product ids end up in log lines, so `ProductId` rejects control characters (with a `400`): an id containing a line
+break could otherwise forge fake log entries.
 
 ### No retries
 
@@ -361,11 +369,12 @@ k6 reports about 600 "interrupted iterations": the test script stops its first t
 
 ## Tests
 
-69 tests, run with `./mvnw test`:
+74 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|
-| `ProductTest` | Domain validation: invalid products can't be created |
+| `ProductTest` | Domain validation: invalid products and ids can't be created |
+| `ProductCatalogPropertiesTest` | Settings bind from `application.properties`, and invalid or missing ones stop startup |
 | `GetSimilarProductsUseCaseTest` | Ordering, skipping, parallelism (uses a mocked port) |
 | `HttpProductCatalogTest` | HTTP adapter: JSON mapping and how each error status is handled (uses Spring's `MockRestServiceServer`) |
 | `CachingProductCatalogTest` | Caching, expiry, brief caching of "not found", background refresh, no caching of failures, request coalescing, metrics |
@@ -390,6 +399,9 @@ environment variable, for example:
 PRODUCT_API_BASE_URL=http://other-host:3001
 PRODUCT_CATALOG_LOOKUP_TIMEOUT=2s
 ```
+
+The settings are validated at startup: a missing or invalid value (say, a bulkhead of `0` calls) stops the
+application with a message naming the setting, instead of failing later in some unrelated place.
 
 ---
 

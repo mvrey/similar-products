@@ -40,7 +40,7 @@ class RestExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ProductCatalogUnavailableException.class)
     ProblemDetail handleCatalogUnavailable(ProductCatalogUnavailableException e) {
         // Expected while an upstream is down: one line, no stack trace (the message includes the root cause)
-        log.warn(e.getMessage());
+        log.warn("{}", e.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY,
                 "The product catalog is currently unavailable");
         problem.setTitle("Product catalog unavailable");
@@ -49,7 +49,7 @@ class RestExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ProductCatalogTimeoutException.class)
     ProblemDetail handleCatalogTimeout(ProductCatalogTimeoutException e) {
-        log.warn(e.getMessage());
+        log.warn("{}", e.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT,
                 "The product catalog did not answer in time");
         problem.setTitle("Product catalog timeout");
@@ -58,7 +58,7 @@ class RestExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ProductCatalogBusyException.class)
     ProblemDetail handleCatalogBusy(ProductCatalogBusyException e) {
-        log.warn(e.getMessage());
+        log.warn("{}", e.getMessage());
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
                 "Too many requests are in progress; try again shortly");
         problem.setTitle("Service busy");
