@@ -1,9 +1,10 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
 
 import java.time.Duration;
 import java.util.List;
@@ -17,7 +18,7 @@ import java.util.function.Supplier;
 
 /**
  * Decorator that limits how long a caller waits for another ProductCatalog.
- * A lookup that takes longer is reported as unavailable. It is not cancelled, so a slower upstream
+ * A lookup that takes longer is reported as a {@link ProductCatalogTimeoutException}. It is not cancelled, so a slower upstream
  * call still completes in the background and can fill the cache below this decorator.
  */
 public class TimeLimitingProductCatalog implements ProductCatalog {
@@ -47,7 +48,7 @@ public class TimeLimitingProductCatalog implements ProductCatalog {
         try {
             return result.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            throw new ProductCatalogUnavailableException(productId,
+            throw new ProductCatalogTimeoutException(productId,
                     new TimeoutException("No answer within " + timeout.toMillis() + " ms"));
         } catch (ExecutionException e) {
             // Rethrow the delegate's exception as it is, so callers see the same exceptions as without this decorator

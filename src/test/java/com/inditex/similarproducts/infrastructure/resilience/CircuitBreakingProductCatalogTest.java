@@ -1,8 +1,9 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -20,13 +21,12 @@ import static org.mockito.Mockito.when;
 
 class CircuitBreakingProductCatalogTest {
 
-    // Opens after 3 calls if at least half of them failed; stays open for a minute (longer than any test)
-    private static final CircuitBreakerProperties PROPERTIES =
-            new CircuitBreakerProperties(50, 4, 3, Duration.ofMinutes(1));
+    // Stays open for a minute (longer than any test)
+    private static final CircuitBreakerSettings SETTINGS = settings(Duration.ofMinutes(1));
 
     private final ProductCatalog delegate = mock(ProductCatalog.class);
     private final CircuitBreakingProductCatalog catalog =
-            new CircuitBreakingProductCatalog(delegate, PROPERTIES.toConfig());
+            new CircuitBreakingProductCatalog(delegate, SETTINGS);
 
     @Test
     void stopsCallingAProductThatKeepsFailing() {
@@ -85,7 +85,7 @@ class CircuitBreakingProductCatalogTest {
     @Test
     void recoversWhenTheProductWorksAgain() {
         CircuitBreakingProductCatalog catalog = new CircuitBreakingProductCatalog(delegate,
-                new CircuitBreakerProperties(50, 4, 3, Duration.ofMillis(50)).toConfig());
+                settings(Duration.ofMillis(50)));
         when(delegate.findById(id("6")))
                 .thenThrow(unavailable("6"), unavailable("6"), unavailable("6"))
                 .thenReturn(Optional.of(product("6")));
@@ -98,6 +98,26 @@ class CircuitBreakingProductCatalogTest {
         await().atMost(Duration.ofSeconds(2)).ignoreExceptions()
                 .untilAsserted(() -> assertThat(catalog.findById(id("6"))).contains(product("6")));
         assertThat(catalog.findById(id("6"))).contains(product("6"));
+    }
+
+    @Test
+    void publishesTheNumberOfOpenProductBreakersAndTheSimilarIdsBreakerState() {
+        when(delegate.findById(id("6"))).thenThrow(unavailable("6"));
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        catalog.bindTo(registry);
+
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> catalog.findById(id("6"))).isInstanceOf(ProductCatalogUnavailableException.class);
+        }
+
+        assertThat(registry.get("product.catalog.product.breakers.open").gauge().value()).isEqualTo(1);
+        assertThat(registry.get("resilience4j.circuitbreaker.state").tags("name", "similar-ids", "state", "closed")
+                .gauge().value()).isEqualTo(1);
+    }
+
+    // Opens after 3 calls if at least half of them failed
+    private static CircuitBreakerSettings settings(Duration waitDurationInOpenState) {
+        return new CircuitBreakerSettings(50, 4, 3, waitDurationInOpenState, Duration.ofMinutes(30), 100);
     }
 
     private static ProductCatalogUnavailableException unavailable(String id) {

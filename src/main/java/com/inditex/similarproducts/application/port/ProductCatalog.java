@@ -1,6 +1,5 @@
-package com.inditex.similarproducts.domain.port;
+package com.inditex.similarproducts.application.port;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 
@@ -8,8 +7,8 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Outbound port: what the domain needs from the external product services.
- * The implementation (an HTTP adapter) lives in the infrastructure layer.
+ * Outbound port of the application layer: what the use case needs from the external product services.
+ * The implementations (an HTTP adapter and the decorators around it) live in the infrastructure layer.
  * <p>
  * Both operations answer "the product does not exist" with an empty result; what that means for the
  * request is decided by the caller.

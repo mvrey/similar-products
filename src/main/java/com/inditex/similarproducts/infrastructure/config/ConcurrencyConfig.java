@@ -10,9 +10,15 @@ import java.util.concurrent.Executors;
 class ConcurrencyConfig {
 
     /**
+     * Name of the executor for product lookups. Injection points name it explicitly, so they never pick up
+     * another Executor bean by accident.
+     */
+    static final String PRODUCT_LOOKUP_EXECUTOR = "productLookupExecutor";
+
+    /**
      * One virtual thread per product lookup: lookups are I/O bound, so they are cheap to run in parallel.
      */
-    @Bean(destroyMethod = "close")
+    @Bean(name = PRODUCT_LOOKUP_EXECUTOR, destroyMethod = "close")
     ExecutorService productLookupExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
     }

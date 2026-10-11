@@ -1,7 +1,8 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,7 +63,7 @@ class TimeLimitingProductCatalogTest {
         });
 
         assertThatThrownBy(() -> catalog.findSimilarIds(id("1")))
-                .isInstanceOf(ProductCatalogUnavailableException.class)
+                .isInstanceOf(ProductCatalogTimeoutException.class)
                 .hasCauseInstanceOf(TimeoutException.class);
     }
 

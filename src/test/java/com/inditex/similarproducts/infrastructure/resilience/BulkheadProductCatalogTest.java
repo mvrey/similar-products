@@ -1,9 +1,10 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -21,10 +22,10 @@ import static org.mockito.Mockito.when;
 class BulkheadProductCatalogTest {
 
     // One call at a time; a second one is rejected straight away
-    private static final BulkheadProperties PROPERTIES = new BulkheadProperties(1, Duration.ZERO);
+    private static final BulkheadSettings SETTINGS = new BulkheadSettings(1, Duration.ZERO);
 
     private final ProductCatalog delegate = mock(ProductCatalog.class);
-    private final BulkheadProductCatalog catalog = new BulkheadProductCatalog(delegate, PROPERTIES.toConfig());
+    private final BulkheadProductCatalog catalog = new BulkheadProductCatalog(delegate, SETTINGS);
 
     @Test
     void rejectsCallsBeyondTheConcurrencyLimitUntilASlotIsFree() throws InterruptedException {
@@ -47,5 +48,13 @@ class BulkheadProductCatalogTest {
         slowCallReleased.countDown();
         assertThat(slowCall.join()).contains(product("1"));
         assertThat(catalog.findById(id("2"))).contains(product("2"));
+    }
+
+    @Test
+    void publishesItsFreeSlotsAsAMetric() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        catalog.bindTo(registry);
+
+        assertThat(registry.get("resilience4j.bulkhead.available.concurrent.calls").gauge().value()).isEqualTo(1);
     }
 }

@@ -1,9 +1,9 @@
 package com.inditex.similarproducts.infrastructure.client;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -19,7 +19,7 @@ import java.util.Optional;
 /**
  * Adapter that implements the ProductCatalog port by calling the existing product APIs over HTTP.
  */
-class HttpProductCatalog implements ProductCatalog {
+public class HttpProductCatalog implements ProductCatalog {
 
     private static final Logger log = LoggerFactory.getLogger(HttpProductCatalog.class);
 
@@ -32,7 +32,7 @@ class HttpProductCatalog implements ProductCatalog {
     /**
      * Creates an adapter whose HTTP client applies the configured base URL and timeouts.
      */
-    static HttpProductCatalog create(RestClient.Builder builder, ProductApiProperties properties) {
+    public static HttpProductCatalog create(RestClient.Builder builder, ProductApiProperties properties) {
         HttpClient httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(properties.connectTimeout())

@@ -151,6 +151,18 @@ class SimilarProductsEndToEndTest {
         assertThat(response.statusCode()).isEqualTo(502);
     }
 
+    @Test
+    void exposesCacheAndResilienceMetrics() throws Exception {
+        productApi.respond("/product/70/similarids", 200, "[]");
+        get("/product/70/similar");
+
+        assertThat(get("/actuator/metrics/cache.gets?tag=cache:similar-ids").statusCode()).isEqualTo(200);
+        assertThat(get("/actuator/metrics/resilience4j.circuitbreaker.state").statusCode()).isEqualTo(200);
+        assertThat(get("/actuator/metrics/resilience4j.bulkhead.available.concurrent.calls").statusCode())
+                .isEqualTo(200);
+        assertThat(get("/actuator/metrics/product.catalog.product.breakers.open").statusCode()).isEqualTo(200);
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());

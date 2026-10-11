@@ -2,17 +2,21 @@ package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.MeterBinder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -26,26 +30,26 @@ import java.util.function.Supplier;
  * </ul>
  * Only {@link ProductCatalogUnavailableException} counts as a failure: "not found" is a valid answer.
  */
-public class CircuitBreakingProductCatalog implements ProductCatalog {
+public class CircuitBreakingProductCatalog implements ProductCatalog, MeterBinder {
 
     private static final Logger log = LoggerFactory.getLogger(CircuitBreakingProductCatalog.class);
 
-    // Per-product breakers are created on demand; forget the ones not used for a while to bound memory
-    private static final Duration IDLE_BREAKER_EXPIRY = Duration.ofMinutes(30);
-    private static final long MAX_PRODUCT_BREAKERS = 10_000;
-
     private final ProductCatalog delegate;
     private final CircuitBreakerConfig config;
+    // Holds only the similar ids breaker: per-product breakers are kept out of the per-breaker metrics
+    private final CircuitBreakerRegistry registry;
     private final CircuitBreaker similarIdsBreaker;
     private final Cache<ProductId, CircuitBreaker> productBreakers;
 
-    public CircuitBreakingProductCatalog(ProductCatalog delegate, CircuitBreakerConfig config) {
+    public CircuitBreakingProductCatalog(ProductCatalog delegate, CircuitBreakerSettings settings) {
         this.delegate = delegate;
-        this.config = withFailuresLimitedTo(config);
-        this.similarIdsBreaker = newBreaker("similar-ids");
+        this.config = withFailuresLimitedTo(settings.toConfig());
+        this.registry = CircuitBreakerRegistry.of(config);
+        this.similarIdsBreaker = withStateLogging(registry.circuitBreaker("similar-ids"));
+        // Per-product breakers are created on demand; forget the ones not used for a while to bound memory
         this.productBreakers = Caffeine.newBuilder()
-                .expireAfterAccess(IDLE_BREAKER_EXPIRY)
-                .maximumSize(MAX_PRODUCT_BREAKERS)
+                .expireAfterAccess(settings.idleProductBreakerExpiry())
+                .maximumSize(settings.maxProductBreakers())
                 .build();
     }
 
@@ -56,8 +60,27 @@ public class CircuitBreakingProductCatalog implements ProductCatalog {
 
     @Override
     public Optional<Product> findById(ProductId productId) {
-        CircuitBreaker breaker = productBreakers.get(productId, id -> newBreaker("product-" + id));
+        CircuitBreaker breaker = productBreakers.get(productId,
+                id -> withStateLogging(CircuitBreaker.of("product-" + id, config)));
         return call(breaker, productId, () -> delegate.findById(productId));
+    }
+
+    /**
+     * Publishes the similar ids breaker's metrics, and the number of open per-product breakers as a single gauge
+     * (per-product metrics would create one time series per product).
+     */
+    @Override
+    public void bindTo(MeterRegistry meterRegistry) {
+        TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(registry).bindTo(meterRegistry);
+        Gauge.builder("product.catalog.product.breakers.open", productBreakers, CircuitBreakingProductCatalog::countOpen)
+                .description("Per-product circuit breakers that are currently open")
+                .register(meterRegistry);
+    }
+
+    private static long countOpen(Cache<ProductId, CircuitBreaker> breakers) {
+        return breakers.asMap().values().stream()
+                .filter(breaker -> breaker.getState() == CircuitBreaker.State.OPEN)
+                .count();
     }
 
     private <T> T call(CircuitBreaker breaker, ProductId productId, Supplier<T> lookup) {
@@ -68,10 +91,9 @@ public class CircuitBreakingProductCatalog implements ProductCatalog {
         }
     }
 
-    private CircuitBreaker newBreaker(String name) {
-        CircuitBreaker breaker = CircuitBreaker.of(name, config);
+    private static CircuitBreaker withStateLogging(CircuitBreaker breaker) {
         breaker.getEventPublisher().onStateTransition(event ->
-                log.info("Circuit breaker '{}': {}", name, event.getStateTransition()));
+                log.info("Circuit breaker '{}': {}", breaker.getName(), event.getStateTransition()));
         return breaker;
     }
 

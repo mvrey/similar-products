@@ -1,13 +1,11 @@
 package com.inditex.similarproducts.application;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
+import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
-import com.inditex.similarproducts.domain.port.ProductCatalog;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,7 +16,6 @@ import java.util.concurrent.Executor;
  * Returns the products similar to a given one, ordered by similarity.
  * Product details are fetched in parallel; similar products that cannot be retrieved are skipped.
  */
-@Service
 public class GetSimilarProductsUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(GetSimilarProductsUseCase.class);
@@ -26,9 +23,9 @@ public class GetSimilarProductsUseCase {
     private final ProductCatalog productCatalog;
     private final Executor executor;
 
-    public GetSimilarProductsUseCase(ProductCatalog productCatalog, Executor productLookupExecutor) {
+    public GetSimilarProductsUseCase(ProductCatalog productCatalog, Executor executor) {
         this.productCatalog = productCatalog;
-        this.executor = productLookupExecutor;
+        this.executor = executor;
     }
 
     /**

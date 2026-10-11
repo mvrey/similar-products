@@ -1,4 +1,4 @@
-package com.inditex.similarproducts.domain.exception;
+package com.inditex.similarproducts.application.port;
 
 import com.inditex.similarproducts.domain.model.ProductId;
 

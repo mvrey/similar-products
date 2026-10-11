@@ -85,6 +85,10 @@ You can see the results at http://localhost:3000/d/Le2Ku9NMk/k6-performance-test
 | The requested product doesn't exist | `404` |
 | The product id is blank | `400` |
 | The similar-ids service fails or is unreachable | `502` |
+| The similar-ids service doesn't answer within the lookup timeout | `504` |
+
+Successful responses carry `Cache-Control: max-age=60` (`similar-products.response-max-age`), so clients and proxies
+can reuse them for a minute.
 
 All errors, including unknown paths, unsupported methods and unexpected failures, use the standard
 [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) *problem details* format:
@@ -99,22 +103,27 @@ All errors, including unknown paths, unsupported methods and unexpected failures
 ## Architecture
 
 The code uses a **hexagonal (ports and adapters)** layout with a small **DDD**-style domain. Dependencies point
-inward only: the domain doesn't know about Spring, HTTP or JSON.
+inward only, and the domain and application layers have no Spring annotations: they don't know about Spring, HTTP
+or JSON. All the wiring happens in `infrastructure.config`.
 
 ```
 com.inditex.similarproducts
 ├── domain                      Business model, no framework code
 │   ├── model                   Product, ProductId (immutable records, validated on construction)
-│   ├── port                    ProductCatalog: what the domain needs from the outside world
-│   └── exception               ProductNotFoundException, ProductCatalogUnavailableException
-├── application                 GetSimilarProductsUseCase: the use case
-└── infrastructure              Technical details
-    ├── rest                    Controller, response DTO, exception → HTTP mapping
-    ├── client                  HTTP adapter for the existing APIs, plus the wiring of the catalog
+│   └── exception               InvalidProductIdException
+├── application                 GetSimilarProductsUseCase, ProductNotFoundException
+│   └── port                    ProductCatalog: what the use case needs from the outside world, and its failures
+└── infrastructure              Technical details (adapters)
+    ├── rest                    Inbound: controller, response DTO, exception → HTTP mapping
+    ├── client                  Outbound: HTTP adapter for the existing APIs
     ├── cache                   Caching decorator
     ├── resilience              Time limit, bulkhead and circuit breaker decorators
-    └── config                  Virtual-thread executor
+    └── config                  Composition root: wiring, settings, virtual-thread executor
 ```
+
+The domain is deliberately small. The feature only reads and combines products, so there are no aggregates or
+domain services to model; the value is in validated value objects and in keeping business rules (what a missing
+product means) in the use case.
 
 The `ProductCatalog` port is implemented as a **chain of decorators**. Each layer adds one concern and implements
 the same interface. The use case doesn't know which layers are there:
@@ -145,8 +154,8 @@ How this maps to SOLID:
 
 - **Single responsibility:** the controller only translates HTTP. The use case only coordinates. Each decorator
   handles one concern.
-- **Open/closed:** the time limit, caching, bulkhead and circuit breaking were added as new classes. The use case, the controller and the
-  HTTP adapter didn't change.
+- **Open/closed:** the time limit, caching, bulkhead and circuit breaking were added as new classes. The use case,
+  the controller and the HTTP adapter didn't change.
 - **Liskov substitution:** any `ProductCatalog` can replace another. The decorators keep the port's contract,
   including which exceptions it throws.
 - **Interface segregation:** the port has only the two operations the use case needs.
@@ -202,14 +211,20 @@ so they can be tuned for each environment.
 The cache stores product details and similar-ids lists, using [Caffeine](https://github.com/ben-manes/caffeine) in
 async mode:
 
-- **Only successful results are cached.** Errors and timeouts are usually temporary, so the next request retries
-  them. Missing products aren't cached either.
+- **Errors are never cached.** Errors and timeouts are usually temporary, so the next request retries them.
+- **"Not found" is cached briefly** (`1m`, `product-catalog.cache.not-found-ttl`). Without it, every request for an
+  unknown product would reach the upstream, and the circuit breakers deliberately ignore 404s, so nothing else would
+  stop them. The short TTL means a product created upstream appears within a minute.
+- **Popular entries are refreshed ahead of expiry.** An entry read when it is older than `8m`
+  (`product-catalog.cache.refresh-after`) is reloaded in the background while the cached value is still served, so
+  frequently requested products never make a request wait for an expired entry. If the reload fails, the cached
+  value is kept until it expires.
 - **Concurrent requests for the same product share one upstream call.** The cache stores the in-flight lookup, not
   only the finished result. When 200 users ask for the same uncached product at the same time, the upstream gets
   one call, not 200.
 - **Giving up doesn't cancel the shared lookup.** A request that stops waiting after the lookup timeout leaves the
   call running for the other waiting requests and for the cache.
-- Entries expire after `10m` (`product-catalog.cache.ttl`), with at most 10,000 entries per cache.
+- Found entries expire after `10m` (`product-catalog.cache.ttl`), with at most 10,000 entries per cache.
 
 **Trade-off:** prices and availability can be up to 10 minutes old. That is acceptable for product
 recommendations. It would not be acceptable for checkout, which should read live data.
@@ -256,6 +271,20 @@ health of the upstream, so it must not count towards opening a breaker.
 | `max-concurrent-calls` | `200` |
 | `max-wait-duration` | `500ms` |
 
+### Metrics
+
+Actuator exposes `/actuator/health` and `/actuator/metrics`, including:
+
+| Metric | Meaning |
+|---|---|
+| `cache.gets`, `cache.puts`, `cache.evictions`… (tag `cache`: `products`, `similar-ids`) | Cache hit rate and size |
+| `resilience4j.circuitbreaker.*` (tag `name`: `similar-ids`) | State and failure rate of the similar-ids breaker |
+| `product.catalog.product.breakers.open` | How many per-product breakers are open right now |
+| `resilience4j.bulkhead.*` | Free and maximum concurrent upstream calls |
+
+Per-product breakers are reported as a single count: one set of meters per product would create thousands of
+time series.
+
 ### Quiet logs for expected failures
 
 Upstream failures are expected and can be frequent (product `6` in the mocks fails on every call). A failed request
@@ -295,19 +324,22 @@ before the cache is warm. The results are the same with the service running in D
 
 ## Tests
 
-55 tests, run with `./mvnw test`:
+61 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|
 | `ProductTest` | Domain validation: invalid products can't be created |
 | `GetSimilarProductsUseCaseTest` | Ordering, skipping, parallelism (uses a mocked port) |
 | `HttpProductCatalogTest` | HTTP adapter: JSON mapping and how each error status is handled (uses Spring's `MockRestServiceServer`) |
-| `CachingProductCatalogTest` | Caching, expiry, no caching of failures or missing products, request coalescing |
+| `CachingProductCatalogTest` | Caching, expiry, brief caching of "not found", background refresh, no caching of failures, request coalescing, metrics |
 | `TimeLimitingProductCatalogTest` | Gives up after the timeout without cancelling the lookup |
-| `BulkheadProductCatalogTest` | Rejects calls beyond the concurrency limit |
-| `CircuitBreakingProductCatalogTest` | Breakers open, stay per product, ignore 404s, and recover |
-| `SimilarProductsControllerTest` | Web layer: JSON format, status codes and problem details for every error (`@WebMvcTest`) |
-| `SimilarProductsEndToEndTest` | The full application on a random port against a fake HTTP API built on the JDK's `HttpServer` |
+| `BulkheadProductCatalogTest` | Rejects calls beyond the concurrency limit, metrics |
+| `CircuitBreakingProductCatalogTest` | Breakers open, stay per product, ignore 404s, recover, metrics |
+| `SimilarProductsControllerTest` | Web layer: JSON format, status codes, `Cache-Control`, problem details for every error (`@WebMvcTest`) |
+| `SimilarProductsEndToEndTest` | The full application on a random port against a fake HTTP API built on the JDK's `HttpServer`, including the Actuator metrics |
+
+The tests don't depend on wall-clock timing: they use latches, barriers, Awaitility and a fake cache clock, so they
+are fast and don't fail randomly on a busy machine.
 
 ---
 
@@ -325,9 +357,7 @@ PRODUCT_CATALOG_LOOKUP_TIMEOUT=2s
 
 ## Possible improvements
 
-- **Metrics:** publish cache hit rate and circuit breaker state through Micrometer and Actuator, and add dashboards.
-- **Refresh-ahead:** reload popular entries in the background before they expire (Caffeine's
-  `refreshAfterWrite`), so users never wait for an expired entry.
+- **Dashboards and alerts** on the metrics above (for example, alert when the similar-ids breaker opens).
 - **Shared cache:** with several instances behind a load balancer, a shared cache such as Redis would avoid each
   instance warming its own cache.
 - **Contract tests:** check responses automatically against `similarProducts.yaml`.

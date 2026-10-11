@@ -1,8 +1,9 @@
 package com.inditex.similarproducts.infrastructure.rest;
 
+import com.inditex.similarproducts.application.ProductNotFoundException;
+import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -42,6 +43,15 @@ class RestExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY,
                 "The product catalog is currently unavailable");
         problem.setTitle("Product catalog unavailable");
+        return problem;
+    }
+
+    @ExceptionHandler(ProductCatalogTimeoutException.class)
+    ProblemDetail handleCatalogTimeout(ProductCatalogTimeoutException e) {
+        log.warn(e.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT,
+                "The product catalog did not answer in time");
+        problem.setTitle("Product catalog timeout");
         return problem;
     }
 

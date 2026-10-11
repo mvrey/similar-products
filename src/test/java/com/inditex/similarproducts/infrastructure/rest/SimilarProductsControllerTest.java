@@ -1,8 +1,9 @@
 package com.inditex.similarproducts.infrastructure.rest;
 
 import com.inditex.similarproducts.application.GetSimilarProductsUseCase;
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
-import com.inditex.similarproducts.domain.exception.ProductNotFoundException;
+import com.inditex.similarproducts.application.ProductNotFoundException;
+import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import org.junit.jupiter.api.Test;
@@ -14,11 +15,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -39,6 +42,7 @@ class SimilarProductsControllerTest {
 
         mockMvc.perform(get("/product/1/similar"))
                 .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "max-age=60"))
                 .andExpect(content().json("""
                         [
                           {"id":"2","name":"Dress","price":19.99,"availability":true},
@@ -74,6 +78,16 @@ class SimilarProductsControllerTest {
         mockMvc.perform(get("/product/1/similar"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.status").value(502));
+    }
+
+    @Test
+    void returns504WhenCatalogTimesOut() throws Exception {
+        when(getSimilarProducts.execute(new ProductId("1")))
+                .thenThrow(new ProductCatalogTimeoutException(new ProductId("1"), new TimeoutException("too slow")));
+
+        mockMvc.perform(get("/product/1/similar"))
+                .andExpect(status().isGatewayTimeout())
+                .andExpect(jsonPath("$.status").value(504));
     }
 
     @Test

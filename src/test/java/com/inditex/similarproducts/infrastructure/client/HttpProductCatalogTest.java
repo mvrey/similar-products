@@ -1,6 +1,6 @@
 package com.inditex.similarproducts.infrastructure.client;
 
-import com.inditex.similarproducts.domain.exception.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import com.inditex.similarproducts.support.FakeProductApi;
