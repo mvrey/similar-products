@@ -1,7 +1,7 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.inditex.similarproducts.application.port.ProductCatalog;
-import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import io.github.resilience4j.bulkhead.Bulkhead;
@@ -9,7 +9,6 @@ import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.micrometer.tagged.TaggedBulkheadMetrics;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.binder.MeterBinder;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,9 +17,9 @@ import java.util.function.Supplier;
 /**
  * Decorator that caps how many calls to another ProductCatalog run at the same time, to protect the
  * external product APIs during traffic spikes. A call that cannot get a slot in time is reported as
- * unavailable.
+ * {@link ProductCatalogBusyException}, which circuit breakers ignore: it is our own load, not an upstream failure.
  */
-public class BulkheadProductCatalog implements ProductCatalog, MeterBinder {
+public class BulkheadProductCatalog implements ProductCatalog {
 
     private final ProductCatalog delegate;
     private final BulkheadRegistry registry;
@@ -42,8 +41,7 @@ public class BulkheadProductCatalog implements ProductCatalog, MeterBinder {
         return call(productId, () -> delegate.findById(productId));
     }
 
-    @Override
-    public void bindTo(MeterRegistry meterRegistry) {
+    public void registerMetrics(MeterRegistry meterRegistry) {
         TaggedBulkheadMetrics.ofBulkheadRegistry(registry).bindTo(meterRegistry);
     }
 
@@ -51,7 +49,7 @@ public class BulkheadProductCatalog implements ProductCatalog, MeterBinder {
         try {
             return bulkhead.executeSupplier(lookup);
         } catch (BulkheadFullException e) {
-            throw new ProductCatalogUnavailableException(productId, e);
+            throw new ProductCatalogBusyException(productId, e);
         }
     }
 }

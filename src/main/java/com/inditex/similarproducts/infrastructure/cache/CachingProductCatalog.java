@@ -10,7 +10,6 @@ import com.inditex.similarproducts.application.port.ProductCatalogUnavailableExc
 import com.inditex.similarproducts.domain.model.Product;
 import com.inditex.similarproducts.domain.model.ProductId;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.binder.MeterBinder;
 import io.micrometer.core.instrument.binder.cache.CaffeineCacheMetrics;
 
 import java.util.List;
@@ -30,7 +29,7 @@ import java.util.concurrent.Executor;
  *       cancelled when a caller stops waiting, so it still fills the cache for later requests.</li>
  * </ul>
  */
-public class CachingProductCatalog implements ProductCatalog, MeterBinder {
+public class CachingProductCatalog implements ProductCatalog {
 
     private final AsyncLoadingCache<ProductId, Optional<List<ProductId>>> similarIdsCache;
     private final AsyncLoadingCache<ProductId, Optional<Product>> productCache;
@@ -57,8 +56,7 @@ public class CachingProductCatalog implements ProductCatalog, MeterBinder {
         return lookUp(productCache, productId);
     }
 
-    @Override
-    public void bindTo(MeterRegistry registry) {
+    public void registerMetrics(MeterRegistry registry) {
         CaffeineCacheMetrics.monitor(registry, similarIdsCache, "similar-ids");
         CaffeineCacheMetrics.monitor(registry, productCache, "products");
     }

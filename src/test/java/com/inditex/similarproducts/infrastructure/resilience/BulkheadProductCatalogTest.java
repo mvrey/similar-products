@@ -1,7 +1,7 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.inditex.similarproducts.application.port.ProductCatalog;
-import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
 import com.inditex.similarproducts.domain.model.Product;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -42,7 +42,7 @@ class BulkheadProductCatalogTest {
         slowCallStarted.await();
 
         assertThatThrownBy(() -> catalog.findById(id("2")))
-                .isInstanceOf(ProductCatalogUnavailableException.class)
+                .isInstanceOf(ProductCatalogBusyException.class)
                 .hasCauseInstanceOf(BulkheadFullException.class);
 
         slowCallReleased.countDown();
@@ -53,7 +53,7 @@ class BulkheadProductCatalogTest {
     @Test
     void publishesItsFreeSlotsAsAMetric() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        catalog.bindTo(registry);
+        catalog.registerMetrics(registry);
 
         assertThat(registry.get("resilience4j.bulkhead.available.concurrent.calls").gauge().value()).isEqualTo(1);
     }

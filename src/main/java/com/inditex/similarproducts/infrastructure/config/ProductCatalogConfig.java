@@ -6,7 +6,8 @@ import com.inditex.similarproducts.infrastructure.cache.CachingProductCatalog;
 import com.inditex.similarproducts.infrastructure.client.HttpProductCatalog;
 import com.inditex.similarproducts.infrastructure.client.ProductApiProperties;
 import com.inditex.similarproducts.infrastructure.resilience.BulkheadProductCatalog;
-import com.inditex.similarproducts.infrastructure.resilience.CircuitBreakingProductCatalog;
+import com.inditex.similarproducts.infrastructure.resilience.PerProductCircuitBreakingCatalog;
+import com.inditex.similarproducts.infrastructure.resilience.SimilarIdsCircuitBreakingCatalog;
 import com.inditex.similarproducts.infrastructure.resilience.TimeLimitingProductCatalog;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,7 +23,11 @@ import java.util.concurrent.Executor;
  * layers carry no Spring annotations; everything is wired here.
  * <p>
  * The port is a chain of decorators:
- * time limit -> cache -> bulkhead -> circuit breakers -> HTTP adapter -> external product APIs.
+ * per-product breakers -> time limit -> cache -> bulkhead -> similar ids breaker -> HTTP adapter.
+ * The order matters; see the comments below.
+ * <p>
+ * Metrics are registered explicitly. The decorators deliberately don't implement Micrometer's MeterBinder:
+ * Spring Boot binds MeterBinder beans by itself, so the outermost one (the bean) would be registered twice.
  */
 @Configuration
 @EnableConfigurationProperties({ProductApiProperties.class, ProductCatalogProperties.class})
@@ -41,18 +46,27 @@ class ProductCatalogConfig {
                                   @Qualifier(ConcurrencyConfig.PRODUCT_LOOKUP_EXECUTOR) Executor productLookupExecutor) {
         HttpProductCatalog http = HttpProductCatalog.create(restClientBuilder, apiProperties);
 
-        CircuitBreakingProductCatalog circuitBreaking = new CircuitBreakingProductCatalog(http,
+        // Below the cache: cached similar ids are still served while this breaker is open
+        SimilarIdsCircuitBreakingCatalog similarIdsBreaker = new SimilarIdsCircuitBreakingCatalog(http,
                 properties.circuitBreaker());
-        circuitBreaking.bindTo(meterRegistry);
+        similarIdsBreaker.registerMetrics(meterRegistry);
 
-        // Above the breakers, so calls rejected because of our own load never count as upstream failures
-        BulkheadProductCatalog bulkhead = new BulkheadProductCatalog(circuitBreaking, properties.bulkhead());
-        bulkhead.bindTo(meterRegistry);
+        // Above the similar ids breaker: calls rejected because of our own load never reach it
+        BulkheadProductCatalog bulkhead = new BulkheadProductCatalog(similarIdsBreaker, properties.bulkhead());
+        bulkhead.registerMetrics(meterRegistry);
 
+        // Below the time limit: a slow upstream call keeps running after the caller gives up, and fills the cache
         CachingProductCatalog caching = new CachingProductCatalog(bulkhead, properties.cache(),
                 productLookupExecutor);
-        caching.bindTo(meterRegistry);
+        caching.registerMetrics(meterRegistry);
 
-        return new TimeLimitingProductCatalog(caching, properties.lookupTimeout(), productLookupExecutor);
+        TimeLimitingProductCatalog timeLimited = new TimeLimitingProductCatalog(caching,
+                properties.lookupTimeout(), productLookupExecutor);
+
+        // Above the time limit: a product that keeps timing out opens its breaker and is then skipped at once
+        PerProductCircuitBreakingCatalog perProductBreakers = new PerProductCircuitBreakingCatalog(timeLimited,
+                properties.circuitBreaker());
+        perProductBreakers.registerMetrics(meterRegistry);
+        return perProductBreakers;
     }
 }

@@ -1,6 +1,8 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
 import com.inditex.similarproducts.application.port.ProductCatalog;
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
+import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
 import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -8,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.Optional;
+import java.util.concurrent.TimeoutException;
 
 import static com.inditex.similarproducts.support.TestProducts.id;
 import static com.inditex.similarproducts.support.TestProducts.product;
@@ -19,22 +22,19 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class CircuitBreakingProductCatalogTest {
+class PerProductCircuitBreakingCatalogTest {
 
     // Stays open for a minute (longer than any test)
     private static final CircuitBreakerSettings SETTINGS = settings(Duration.ofMinutes(1));
 
     private final ProductCatalog delegate = mock(ProductCatalog.class);
-    private final CircuitBreakingProductCatalog catalog =
-            new CircuitBreakingProductCatalog(delegate, SETTINGS);
+    private final PerProductCircuitBreakingCatalog catalog = new PerProductCircuitBreakingCatalog(delegate, SETTINGS);
 
     @Test
     void stopsCallingAProductThatKeepsFailing() {
         when(delegate.findById(id("6"))).thenThrow(unavailable("6"));
 
-        for (int i = 0; i < 3; i++) {
-            assertThatThrownBy(() -> catalog.findById(id("6"))).isInstanceOf(ProductCatalogUnavailableException.class);
-        }
+        failThreeTimes("6");
 
         // The breaker is now open: the call fails fast without reaching the delegate
         assertThatThrownBy(() -> catalog.findById(id("6")))
@@ -44,13 +44,23 @@ class CircuitBreakingProductCatalogTest {
     }
 
     @Test
+    void stopsWaitingForAProductThatKeepsTimingOut() {
+        when(delegate.findById(id("10000")))
+                .thenThrow(new ProductCatalogTimeoutException(id("10000"), new TimeoutException("too slow")));
+
+        failThreeTimes("10000");
+
+        assertThatThrownBy(() -> catalog.findById(id("10000")))
+                .hasCauseInstanceOf(CallNotPermittedException.class);
+        verify(delegate, times(3)).findById(id("10000"));
+    }
+
+    @Test
     void aFailingProductDoesNotAffectOtherProducts() {
         when(delegate.findById(id("6"))).thenThrow(unavailable("6"));
         when(delegate.findById(id("1"))).thenReturn(Optional.of(product("1")));
 
-        for (int i = 0; i < 4; i++) {
-            assertThatThrownBy(() -> catalog.findById(id("6"))).isInstanceOf(ProductCatalogUnavailableException.class);
-        }
+        failThreeTimes("6");
 
         assertThat(catalog.findById(id("1"))).contains(product("1"));
     }
@@ -58,33 +68,41 @@ class CircuitBreakingProductCatalogTest {
     @Test
     void notFoundDoesNotCountAsFailure() {
         when(delegate.findById(id("5"))).thenReturn(Optional.empty());
-        when(delegate.findSimilarIds(id("99"))).thenReturn(Optional.empty());
 
         for (int i = 0; i < 5; i++) {
             assertThat(catalog.findById(id("5"))).isEmpty();
-            assertThat(catalog.findSimilarIds(id("99"))).isEmpty();
         }
 
         verify(delegate, times(5)).findById(id("5"));
-        verify(delegate, times(5)).findSimilarIds(id("99"));
     }
 
     @Test
-    void failsFastWhenSimilarIdsServiceIsDown() {
-        when(delegate.findSimilarIds(id("1"))).thenThrow(unavailable("1"));
+    void beingBusyDoesNotCountAsFailure() {
+        when(delegate.findById(id("1")))
+                .thenThrow(new ProductCatalogBusyException(id("1"), new RuntimeException("bulkhead full")));
 
-        for (int i = 0; i < 3; i++) {
-            assertThatThrownBy(() -> catalog.findSimilarIds(id("1"))).isInstanceOf(ProductCatalogUnavailableException.class);
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> catalog.findById(id("1"))).isInstanceOf(ProductCatalogBusyException.class);
         }
 
-        assertThatThrownBy(() -> catalog.findSimilarIds(id("1")))
-                .hasCauseInstanceOf(CallNotPermittedException.class);
-        verify(delegate, times(3)).findSimilarIds(id("1"));
+        verify(delegate, times(5)).findById(id("1"));
+    }
+
+    @Test
+    void passesSimilarIdsThroughWithoutABreaker() {
+        when(delegate.findSimilarIds(id("1"))).thenThrow(unavailable("1"));
+
+        for (int i = 0; i < 5; i++) {
+            assertThatThrownBy(() -> catalog.findSimilarIds(id("1")))
+                    .isInstanceOf(ProductCatalogUnavailableException.class);
+        }
+
+        verify(delegate, times(5)).findSimilarIds(id("1"));
     }
 
     @Test
     void recoversWhenTheProductWorksAgain() {
-        CircuitBreakingProductCatalog catalog = new CircuitBreakingProductCatalog(delegate,
+        PerProductCircuitBreakingCatalog catalog = new PerProductCircuitBreakingCatalog(delegate,
                 settings(Duration.ofMillis(50)));
         when(delegate.findById(id("6")))
                 .thenThrow(unavailable("6"), unavailable("6"), unavailable("6"))
@@ -101,18 +119,21 @@ class CircuitBreakingProductCatalogTest {
     }
 
     @Test
-    void publishesTheNumberOfOpenProductBreakersAndTheSimilarIdsBreakerState() {
+    void publishesTheNumberOfOpenBreakers() {
         when(delegate.findById(id("6"))).thenThrow(unavailable("6"));
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        catalog.bindTo(registry);
+        catalog.registerMetrics(registry);
 
-        for (int i = 0; i < 3; i++) {
-            assertThatThrownBy(() -> catalog.findById(id("6"))).isInstanceOf(ProductCatalogUnavailableException.class);
-        }
+        failThreeTimes("6");
 
         assertThat(registry.get("product.catalog.product.breakers.open").gauge().value()).isEqualTo(1);
-        assertThat(registry.get("resilience4j.circuitbreaker.state").tags("name", "similar-ids", "state", "closed")
-                .gauge().value()).isEqualTo(1);
+    }
+
+    private void failThreeTimes(String productId) {
+        for (int i = 0; i < 3; i++) {
+            assertThatThrownBy(() -> catalog.findById(id(productId)))
+                    .isInstanceOf(ProductCatalogUnavailableException.class);
+        }
     }
 
     // Opens after 3 calls if at least half of them failed

@@ -2,6 +2,7 @@ package com.inditex.similarproducts.infrastructure.rest;
 
 import com.inditex.similarproducts.application.GetSimilarProductsUseCase;
 import com.inditex.similarproducts.application.ProductNotFoundException;
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
 import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
 import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.model.Product;
@@ -88,6 +89,16 @@ class SimilarProductsControllerTest {
         mockMvc.perform(get("/product/1/similar"))
                 .andExpect(status().isGatewayTimeout())
                 .andExpect(jsonPath("$.status").value(504));
+    }
+
+    @Test
+    void returns503WhenTooManyRequestsAreInProgress() throws Exception {
+        when(getSimilarProducts.execute(new ProductId("1")))
+                .thenThrow(new ProductCatalogBusyException(new ProductId("1"), new RuntimeException("bulkhead full")));
+
+        mockMvc.perform(get("/product/1/similar"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value(503));
     }
 
     @Test

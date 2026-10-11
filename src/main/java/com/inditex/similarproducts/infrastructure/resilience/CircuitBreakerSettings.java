@@ -1,5 +1,7 @@
 package com.inditex.similarproducts.infrastructure.resilience;
 
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
+import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 
 import java.time.Duration;
@@ -18,12 +20,19 @@ public record CircuitBreakerSettings(float failureRateThreshold, int slidingWind
                                      Duration waitDurationInOpenState, Duration idleProductBreakerExpiry,
                                      long maxProductBreakers) {
 
+    /**
+     * Only an unavailable catalog (error, timeout, invalid data) counts as a failure. "Not found" is a valid
+     * answer, and a call refused because this service is busy says nothing about the catalog's health.
+     */
     CircuitBreakerConfig toConfig() {
         return CircuitBreakerConfig.custom()
                 .failureRateThreshold(failureRateThreshold)
                 .slidingWindowSize(slidingWindowSize)
                 .minimumNumberOfCalls(minimumNumberOfCalls)
                 .waitDurationInOpenState(waitDurationInOpenState)
+                // Replaces the default "record every exception" predicate
+                .recordException(e -> e instanceof ProductCatalogUnavailableException
+                        && !(e instanceof ProductCatalogBusyException))
                 .build();
     }
 }

@@ -152,6 +152,26 @@ class SimilarProductsEndToEndTest {
     }
 
     @Test
+    void stopsWaitingForAProductThatKeepsTimingOut() throws Exception {
+        // Slower than the read timeout: the product is never cached, so every lookup times out
+        productApi.respond("/product/80/similarids", 200, "[81,82]")
+                .respond("/product/81", 200, product("81", "Shirt", "9.99", true))
+                .respond("/product/82", 200, product("82", "Coat", "89.99", true), Duration.ofSeconds(5));
+
+        // Each request waits the lookup timeout; after enough timeouts the product's breaker opens...
+        for (int i = 0; i < 5; i++) {
+            JSONAssert.assertEquals("[{\"id\":\"81\"}]", get("/product/80/similar").body(),
+                    JSONCompareMode.STRICT_ORDER);
+        }
+        assertThat(get("/actuator/metrics/product.catalog.product.breakers.open").body())
+                .contains("\"value\":1.0");
+
+        // ...and from then on the product is skipped without waiting
+        JSONAssert.assertEquals("[{\"id\":\"81\"}]", get("/product/80/similar").body(),
+                JSONCompareMode.STRICT_ORDER);
+    }
+
+    @Test
     void exposesCacheAndResilienceMetrics() throws Exception {
         productApi.respond("/product/70/similarids", 200, "[]");
         get("/product/70/similar");

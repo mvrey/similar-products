@@ -185,7 +185,7 @@ class CachingProductCatalogTest {
     void publishesHitsAndMissesAsMetrics() {
         when(delegate.findById(id("1"))).thenReturn(Optional.of(product("1")));
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        catalog.bindTo(registry);
+        catalog.registerMetrics(registry);
 
         catalog.findById(id("1"));
         catalog.findById(id("1"));

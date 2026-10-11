@@ -1,6 +1,7 @@
 package com.inditex.similarproducts.infrastructure.rest;
 
 import com.inditex.similarproducts.application.ProductNotFoundException;
+import com.inditex.similarproducts.application.port.ProductCatalogBusyException;
 import com.inditex.similarproducts.application.port.ProductCatalogTimeoutException;
 import com.inditex.similarproducts.application.port.ProductCatalogUnavailableException;
 import com.inditex.similarproducts.domain.exception.InvalidProductIdException;
@@ -52,6 +53,15 @@ class RestExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT,
                 "The product catalog did not answer in time");
         problem.setTitle("Product catalog timeout");
+        return problem;
+    }
+
+    @ExceptionHandler(ProductCatalogBusyException.class)
+    ProblemDetail handleCatalogBusy(ProductCatalogBusyException e) {
+        log.warn(e.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "Too many requests are in progress; try again shortly");
+        problem.setTitle("Service busy");
         return problem;
     }
 

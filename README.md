@@ -86,6 +86,7 @@ You can see the results at http://localhost:3000/d/Le2Ku9NMk/k6-performance-test
 | The product id is blank | `400` |
 | The similar-ids service fails or is unreachable | `502` |
 | The similar-ids service doesn't answer within the lookup timeout | `504` |
+| Too many upstream calls are already in progress (bulkhead full) | `503` |
 
 Successful responses carry `Cache-Control: max-age=60` (`similar-products.response-max-age`), so clients and proxies
 can reuse them for a minute.
@@ -132,29 +133,35 @@ the same interface. The use case doesn't know which layers are there:
 GetSimilarProductsUseCase
         │  ProductCatalog
         ▼
-TimeLimitingProductCatalog     stops waiting after the lookup timeout (the lookup itself carries on)
+PerProductCircuitBreakingCatalog  skips a product that keeps failing or timing out
         │  ProductCatalog
         ▼
-CachingProductCatalog          caches successful lookups, merges concurrent requests
+TimeLimitingProductCatalog        stops waiting after the lookup timeout (the lookup itself carries on)
         │  ProductCatalog
         ▼
-BulkheadProductCatalog         caps how many upstream calls run at the same time
+CachingProductCatalog             caches lookups, merges concurrent requests, refreshes popular entries
         │  ProductCatalog
         ▼
-CircuitBreakingProductCatalog  stops calling upstreams that keep failing
+BulkheadProductCatalog            caps how many upstream calls run at the same time
         │  ProductCatalog
         ▼
-HttpProductCatalog             calls the existing APIs over HTTP, with connect and read timeouts
+SimilarIdsCircuitBreakingCatalog  fails fast while the similar-ids service keeps failing
+        │  ProductCatalog
+        ▼
+HttpProductCatalog                calls the existing APIs over HTTP, with connect and read timeouts
         │
         ▼
 existing product APIs (:3001)
 ```
 
+The order matters. Each position is explained where it is wired (`ProductCatalogConfig`) and in the design
+decisions below.
+
 How this maps to SOLID:
 
 - **Single responsibility:** the controller only translates HTTP. The use case only coordinates. Each decorator
   handles one concern.
-- **Open/closed:** the time limit, caching, bulkhead and circuit breaking were added as new classes. The use case,
+- **Open/closed:** the time limit, caching, bulkhead and circuit breakers were added as new classes. The use case,
   the controller and the HTTP adapter didn't change.
 - **Liskov substitution:** any `ProductCatalog` can replace another. The decorators keep the port's contract,
   including which exceptions it throws.
@@ -203,8 +210,12 @@ running in the background, and when it finishes the result goes into the cache. 
 takes 5 s. The first request leaves it out after 3 s, and every later request gets it from the cache in
 milliseconds. Product `10000` takes 50 s, which is longer than the read timeout, so it is treated as broken.
 
-So **no request waits more than about 3 s**, whatever the upstream does. The values are configuration, not code,
-so they can be tuned for each environment.
+So **waiting is bounded**, whatever the upstream does. A request makes two rounds of lookups, one after the other:
+first the similar ids, then all the product details in parallel. Each round waits at most the lookup timeout, so the
+worst case is about 6 s, when both rounds hit slow, uncached upstream calls. In practice similar ids are cached
+and fast, so a request waits at most about 3 s, and a product that keeps timing out stops costing even that once
+its circuit breaker opens (see below). The values are configuration, not code, so they can be tuned for each
+environment.
 
 ### Caching with request coalescing
 
@@ -236,13 +247,30 @@ The service uses [Resilience4j](https://resilience4j.readme.io/) circuit breaker
 - **One breaker for the similar-ids service.** If the service keeps failing, requests get a `502` immediately
   instead of each one waiting for a timeout.
 - **One breaker per product** for product details. A product that keeps failing (product `6` in the mock data
-  always returns `500`) is skipped immediately, and the other products are not affected.
+  always returns `500`) or keeps timing out (product `10000` takes 50 s) is skipped immediately, and the other
+  products are not affected.
+
+The two kinds of breaker sit at different places in the chain, for different reasons:
+
+- The **similar-ids breaker** sits *below the cache*, so cached similar ids are still served while it is open.
+- The **per-product breakers** sit *above the time limit*, so a lookup that doesn't answer in time counts as a
+  failure. Below it, a product that never answers would fail only when the upstream call finally gives up after
+  the read timeout, and because concurrent requests share one upstream call, that is a single failure every
+  10 s: far too few to ever open the breaker. Every request would wait the full 3 s for it, forever. Up here,
+  each request that times out counts, so the breaker opens after a few of them.
+
+**Trade-off:** a product that is slow only until it is cached (product `1000` takes 5 s once) can open its breaker
+during those first seconds, and is then left out for up to `10s` (`wait-duration-in-open-state`) even though it is
+already in the cache. After that, the breaker lets a test call through, the cached product answers at once, and
+the breaker closes.
 
 I didn't use a single global breaker. Once the cache is warm, most upstream traffic is for products that always
 fail. A global breaker would see an almost 100 % failure rate, open, and block healthy products too.
 
 Per-product breakers are created when first needed. Breakers that are idle for 30 minutes are removed, so memory
-stays bounded. Only `ProductCatalogUnavailableException` counts as a failure. A `404` is a valid answer.
+stays bounded. Only an unavailable catalog (an error, a timeout or invalid data) counts as a failure. A `404` is a
+valid answer, and a call refused by the bulkhead (`ProductCatalogBusyException`) is our own load, not a failure of
+the upstream.
 
 | Setting (`product-catalog.circuit-breaker.*`) | Default |
 |---|---|
@@ -250,21 +278,24 @@ stays bounded. Only `ProductCatalogUnavailableException` counts as a failure. A 
 | `sliding-window-size` | `10` calls |
 | `minimum-number-of-calls` | `5` |
 | `wait-duration-in-open-state` | `10s` |
+| `idle-product-breaker-expiry` | `30m` |
+| `max-product-breakers` | `10000` |
 
-The cache wraps the breakers, so cached products are still served while a breaker is open. I tested this by
-stopping the mock server. Cached products were still returned with `200` in about 3 ms. Uncached products failed
-fast with `502`, and the similar-ids breaker opened after 5 failures.
+Because the cache sits above the similar-ids breaker, cached data keeps being served while the upstream is down.
+I tested this by stopping the mock server: cached products were still returned with `200` in about 3 ms, uncached
+ones failed fast with `502`, and the similar-ids breaker opened after 5 failures.
 
 ### A bulkhead protects the existing APIs
 
 Requests run on virtual threads, which are almost free, so nothing would stop a traffic spike from opening thousands
 of upstream calls at once. A [Resilience4j](https://resilience4j.readme.io/) bulkhead caps them: at most `200` calls
-run at the same time, and a call that can't get a slot within `500ms` is treated as unavailable (the product is
-left out, or the request gets a `502`). Cached and coalesced lookups never reach the bulkhead, so in normal traffic
-it is far from full.
+run at the same time, and a call that can't get a slot within `500ms` is rejected as busy (the product is left out,
+or the request gets a `503`). Cached and coalesced lookups never reach the bulkhead, so in normal traffic it is far
+from full.
 
-The bulkhead sits *above* the circuit breakers. A call rejected because of our own load says nothing about the
-health of the upstream, so it must not count towards opening a breaker.
+A call rejected because of our own load says nothing about the health of the upstream, so it must never open a
+breaker. The bulkhead sits *above* the similar-ids breaker, so its rejections never reach it, and the per-product
+breakers, which sit above the bulkhead, ignore them (`ProductCatalogBusyException`).
 
 | Setting (`product-catalog.bulkhead.*`) | Default |
 |---|---|
@@ -306,25 +337,31 @@ services, and the cache is the only local state.
 
 ## Load test results
 
-These are results of the provided k6 test (`scripts/test.js`): five scenarios with 200 virtual users each. They
-were measured on a development laptop against the provided mocks, so absolute numbers depend on the machine.
+These are results of the provided k6 test (`scripts/test.js`): five scenarios with 200 virtual users each, run
+against the service in Docker and the provided mocks, on a development laptop (absolute numbers depend on the
+machine). The final version was measured twice: right after starting the service (empty cache), and again
+straight after (warm cache).
 
-| | Parallel lookups + timeouts | **Final** (+ cache, coalescing, circuit breakers) |
-|---|---|---|
-| Median response time | 753 ms | **~4–6 ms** |
-| 95th percentile | 3.38 s | **~65 ms** |
-| Maximum | 3.71 s | **3.03 s** |
-| Throughput | 94 req/s | **274 req/s** |
-| `502` responses | 7 | **0** |
+| | Parallel lookups + timeouts only | **Final**, cold start | **Final**, warm cache |
+|---|---|---|---|
+| Median response time | 753 ms | **4.4 ms** | **3.4 ms** |
+| 95th percentile | 3.38 s | **50 ms** | **23 ms** |
+| Maximum | 3.71 s | **3.04 s** | **3.01 s** |
+| Throughput | 94 req/s | **289 req/s** | **331 req/s** |
+| Error responses | 7 | **0** | **0** |
 
-The maximum of about 3 s comes from the first requests in the slow scenarios, which wait up to the lookup timeout
-before the cache is warm. The results are the same with the service running in Docker.
+The maximum of about 3 s comes from the first requests for the slow products, which wait up to the lookup timeout
+until the product is cached or its breaker opens. Before the per-product breakers moved above the time limit, every
+request for product `10000` waited those 3 s, and the cold-start 95th percentile was 2.98 s.
+
+k6 reports about 600 "interrupted iterations": the test script stops its first three scenarios with
+`gracefulStop: '0s'`, which cuts the iterations still running at that moment. They are not failed requests.
 
 ---
 
 ## Tests
 
-61 tests, run with `./mvnw test`:
+69 tests, run with `./mvnw test`:
 
 | Test | Scope |
 |---|---|
@@ -334,9 +371,10 @@ before the cache is warm. The results are the same with the service running in D
 | `CachingProductCatalogTest` | Caching, expiry, brief caching of "not found", background refresh, no caching of failures, request coalescing, metrics |
 | `TimeLimitingProductCatalogTest` | Gives up after the timeout without cancelling the lookup |
 | `BulkheadProductCatalogTest` | Rejects calls beyond the concurrency limit, metrics |
-| `CircuitBreakingProductCatalogTest` | Breakers open, stay per product, ignore 404s, recover, metrics |
+| `PerProductCircuitBreakingCatalogTest` | Breakers open on failures and timeouts, stay per product, ignore 404s and busy rejections, recover, metrics |
+| `SimilarIdsCircuitBreakingCatalogTest` | Fails fast while the similar-ids service is down, ignores 404s, metrics |
 | `SimilarProductsControllerTest` | Web layer: JSON format, status codes, `Cache-Control`, problem details for every error (`@WebMvcTest`) |
-| `SimilarProductsEndToEndTest` | The full application on a random port against a fake HTTP API built on the JDK's `HttpServer`, including the Actuator metrics |
+| `SimilarProductsEndToEndTest` | The full application on a random port against a fake HTTP API built on the JDK's `HttpServer`, including a product that keeps timing out and the Actuator metrics |
 
 The tests don't depend on wall-clock timing: they use latches, barriers, Awaitility and a fake cache clock, so they
 are fast and don't fail randomly on a busy machine.
